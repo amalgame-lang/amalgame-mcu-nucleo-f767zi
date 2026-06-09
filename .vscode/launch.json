@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "amc",
+      "request": "launch",
+      "name": "Debug on MCU (F767ZI)",
+      "program": "${workspaceFolder}/firmware",
+      "target": "cortex-m7",
+      "openocd": "board/st_nucleo_f7.cfg",
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false,
+      "preLaunchTask": "amc: build (mcu, debug)"
+    }
+  ]
+}
