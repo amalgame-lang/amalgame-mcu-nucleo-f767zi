@@ -78,7 +78,10 @@ static void amc_uart_init(void) {
     rcc_periph_clock_enable(RCC_USART3);
     gpio_mode_setup(GPIOD, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO8 | GPIO9);
     gpio_set_af(GPIOD, GPIO_AF7, GPIO8 | GPIO9);
-    rcc_apb1_frequency = 16000000;   /* HSI reset clock, so baud computes right */
+    /* Baud uses rcc_apb1_frequency. If a firmware raised the clock (Board_ClockInit
+     * → rcc_clock_setup_hse sets this to the real APB1, e.g. 54 MHz @ 216 MHz), keep
+     * it; only fall back to the 16 MHz HSI reset clock when nothing set it (blink). */
+    if (rcc_apb1_frequency == 0) { rcc_apb1_frequency = 16000000; }
     usart_set_baudrate(USART3, 115200);
     usart_set_databits(USART3, 8);
     usart_set_stopbits(USART3, USART_STOPBITS_1);
