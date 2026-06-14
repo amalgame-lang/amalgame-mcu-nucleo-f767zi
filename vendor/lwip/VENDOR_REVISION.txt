@@ -1,0 +1,6 @@
+lwIP vendored from upstream:
+  repo:   https://github.com/lwip-tcpip/lwip
+  commit: 8e75a40acfea6b05ee643099e41f3b2e11ee464d
+  (master snapshot; "nd6: Add helper copying link-layer addresses")
+
+See vendor/lwip/COPYING (BSD 3-clause). vendor/lwip-port holds our glue.
