@@ -30,7 +30,7 @@
 
 #define ETH_PHY       0
 #define ETH_TXBUFNB   4   /* was 3; +1 slack now that eth_tx's silent refusal is counted (mcnet_tx_drops) */
-#define ETH_RXBUFNB   4
+#define ETH_RXBUFNB   12  /* was 4: a LAN broadcast burst of >4 frames within one 2.5 ms poll overflowed the MAC RX FIFO (ETH_DMAMFBOCR.MFA, measured 2026-09-03) and dropped RTP frames with it */
 #define ETH_BUF_SZ    1536
 
 /* eth_desc_init lays out, per buffer, a descriptor (ETH_DES_STD_SIZE=16B) + the data
