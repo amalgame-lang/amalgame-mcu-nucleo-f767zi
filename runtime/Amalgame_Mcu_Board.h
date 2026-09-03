@@ -21,6 +21,7 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
+#include <libopencm3/cm3/nvic.h>
 
 /* Nucleo-F767ZI on-board LEDs / button (UM1974). */
 #define Board_LedGreen ((i64)(1*16 + 0))   /* PB0  — LD1 */
@@ -72,7 +73,23 @@ static inline i64 Mcu_Millis(void) { return 0; /* TODO: SysTick counter */ }
  * `amc monitor`. Lazy-inits on first write. Baud assumes the 16 MHz HSI reset
  * clock (no PLL setup); fine for logging. */
 #define AMC_HAVE_CONSOLE 1
+/* TX is INTERRUPT-DRIVEN through a ring buffer: Console.Write* return as soon as the
+ * bytes are queued (~1 us/char) instead of stalling the caller 87 us/char at 115200
+ * (a 110-char status line used to freeze the audio loop ~10 ms — longer than the
+ * 7.5 ms DAC ring and the single-frame mic buffer — one click per print, measured
+ * 2026-09-03 with app/full_p2p_drift.am: 30 ms/s of stall, ~12 DAC underruns +
+ * 12 mic overruns per second). Only when the ring is FULL does a write block. */
+#define AMC_UART_RING 4096
+static volatile unsigned char amc_uart_ring[AMC_UART_RING];
+static volatile unsigned int amc_uart_head, amc_uart_tail;   /* head = producer (main), tail = ISR */
 static int amc_uart_inited = 0;
+void usart3_isr(void) {
+    while (usart_get_flag(USART3, USART_FLAG_TXE)) {
+        if (amc_uart_tail == amc_uart_head) { usart_disable_tx_interrupt(USART3); return; }
+        usart_send(USART3, amc_uart_ring[amc_uart_tail]);
+        amc_uart_tail = (amc_uart_tail + 1) % AMC_UART_RING;
+    }
+}
 static void amc_uart_init(void) {
     rcc_periph_clock_enable(RCC_GPIOD);
     rcc_periph_clock_enable(RCC_USART3);
@@ -89,21 +106,29 @@ static void amc_uart_init(void) {
     usart_set_parity(USART3, USART_PARITY_NONE);
     usart_set_flow_control(USART3, USART_FLOWCONTROL_NONE);
     usart_enable(USART3);
+    nvic_enable_irq(NVIC_USART3_IRQ);
     amc_uart_inited = 1;
+}
+static inline void amc_uart_putc(unsigned char c) {
+    unsigned int next = (amc_uart_head + 1) % AMC_UART_RING;
+    while (next == amc_uart_tail) { }            /* ring full: wait for the ISR (rare) */
+    amc_uart_ring[amc_uart_head] = c;
+    amc_uart_head = next;
+    usart_enable_tx_interrupt(USART3);           /* kick (no-op if already enabled) */
 }
 static inline void code_putc(char c) {
     if (!amc_uart_inited) { amc_uart_init(); }
-    usart_send_blocking(USART3, (uint8_t)c);
+    amc_uart_putc((unsigned char)c);
 }
 static inline void Console_Write(code_string s) {
     if (!s) { return; }
     if (!amc_uart_inited) { amc_uart_init(); }
-    for (const char* p = s; *p; p++) { usart_send_blocking(USART3, (uint8_t)*p); }
+    for (const char* p = s; *p; p++) { amc_uart_putc((unsigned char)*p); }
 }
 static inline void Console_WriteLine(code_string s) {
     Console_Write(s);
-    usart_send_blocking(USART3, (uint8_t)'\r');
-    usart_send_blocking(USART3, (uint8_t)'\n');
+    amc_uart_putc('\r');
+    amc_uart_putc('\n');
 }
 
 #endif /* AMALGAME_MCU_BOARD_F767ZI_H */

@@ -13,4 +13,5 @@ void  ethernetif_poll(struct netif *netif);
 /* Bring-up diagnostic: count of frames received from the MAC. */
 extern volatile uint32_t mcnet_rx_frames;
 
+extern volatile uint32_t mcnet_tx_drops;   /* frames refused by eth_tx (TX ring full) */
 #endif /* MCNET_ETHERNETIF_H */

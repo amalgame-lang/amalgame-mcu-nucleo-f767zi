@@ -35,6 +35,7 @@ void dma2_stream0_isr(void)   __attribute__((weak, alias("Default_Handler")));
 void dma2_stream1_isr(void)   __attribute__((weak, alias("Default_Handler")));
 void dma2_stream5_isr(void)   __attribute__((weak, alias("Default_Handler")));
 void eth_isr(void)            __attribute__((weak, alias("Default_Handler")));
+void usart3_isr(void)         __attribute__((weak, alias("Default_Handler")));   /* console TX ring (Amalgame_Mcu_Board.h) */
 
 typedef void (*vector_fn)(void);
 
@@ -50,6 +51,7 @@ vector_fn const vector_table[16 + 104] = {
     [16 + 16] = dma1_stream5_isr,         /* DMA1_STREAM5 — analog DAC TX  */
     [16 + 56] = dma2_stream0_isr,         /* DMA2_STREAM0 — analog ADC RX  */
     [16 + 57] = dma2_stream1_isr,         /* DMA2_STREAM1 — SAI block A TX  */
+    [16 + 39] = usart3_isr,               /* USART3 — console TX ring       */
     [16 + 61] = eth_isr,                  /* ETH                            */
     [16 + 68] = dma2_stream5_isr,         /* DMA2_STREAM5 — SAI block B RX  */
 };

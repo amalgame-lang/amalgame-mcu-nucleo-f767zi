@@ -66,6 +66,11 @@ int net_rx_count(void)
     return (int) mcnet_rx_frames;
 }
 
+int net_tx_drops(void)
+{
+    return (int) mcnet_tx_drops;
+}
+
 /* Diagnostic: the derived MAC (see ethernetif.c mac_addr_init) as "aa:bb:cc:dd:ee:ff" —
  * lets two boards on the same LAN confirm they didn't (by 1-in-16M coincidence)
  * derive the same address from their UIDs. */
@@ -75,6 +80,17 @@ int net_rx_count(void)
 unsigned int net_millis(void)
 {
     return lwip_ms;
+}
+
+/* Microsecond clock = SysTick ms counter + the SysTick down-counter's sub-ms
+ * position (reload 215999 @ 216 MHz AHB → 216 ticks/us, see boards/clock.c). The
+ * ms is read before and after CVR and retried if a tick landed in between. */
+#define MCNET_STK_CVR (*(volatile uint32_t *) 0xE000E018u)
+unsigned long long net_micros(void)
+{
+    uint32_t ms1, ms2, cvr;
+    do { ms1 = lwip_ms; cvr = MCNET_STK_CVR; ms2 = lwip_ms; } while (ms1 != ms2);
+    return (unsigned long long) ms1 * 1000ull + (unsigned long long) ((215999u - cvr) / 216u);
 }
 
 const char *net_mac_str(void)

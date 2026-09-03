@@ -29,7 +29,7 @@
 #endif
 
 #define ETH_PHY       0
-#define ETH_TXBUFNB   3
+#define ETH_TXBUFNB   4   /* was 3; +1 slack now that eth_tx's silent refusal is counted (mcnet_tx_drops) */
 #define ETH_RXBUFNB   4
 #define ETH_BUF_SZ    1536
 
@@ -90,12 +90,28 @@ static void rmii_gpio_init(void)
     gpio_set_af(GPIOG, GPIO_AF11, GPIO11 | GPIO13);
 }
 
+/* Diagnostic: frames refused by eth_tx (descriptor ring full) — silent loss otherwise. */
+volatile uint32_t mcnet_tx_drops = 0;
+
 static err_t low_level_output(struct netif *netif, struct pbuf *p)
 {
     static uint8_t txbuf[ETH_BUF_SZ];
     (void) netif;
     u16_t len = pbuf_copy_partial(p, txbuf, sizeof(txbuf), 0);
-    eth_tx(txbuf, len);
+    if (!eth_tx(txbuf, len)) {          /* TX descriptor still owned by the DMA */
+        mcnet_tx_drops++;
+        return ERR_IF;
+    }
+    /* UNCONDITIONAL transmit poll demand. libopencm3's eth_tx only kicks the DMA when
+     * it sees TBUS ("buffer unavailable") already set; measured 2026-09-03 with
+     * app/full_p2p_drift.am: at a steady 400 frames/s, 1 frame out of ETH_TXBUFNB
+     * missed that window and sat in its descriptor until the NEXT eth_tx (2.5 ms
+     * later) issued the demand -> frames left the board in back-to-back pairs with
+     * a periodic one-frame delay (period == ETH_TXBUFNB: 3 with 3 descriptors, 5
+     * with 5). A poll demand while the DMA is already running is a no-op, so
+     * always issuing it is safe (ChibiOS does the same). */
+    ETH_DMASR = ETH_DMASR_TBUS;
+    ETH_DMATPDR = 0;
     return ERR_OK;
 }
 

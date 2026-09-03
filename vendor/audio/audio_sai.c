@@ -55,6 +55,14 @@ static int16_t          rx_dma[2 * AUD_FRAME];
 static int16_t          rx_frame[AUD_FRAME];
 static volatile int     rx_ready;
 
+/* diagnostics: every underrun = 2.5 ms of injected silence (audible click); every
+ * overrun = a captured mic frame lost before the loop took it. Both mean the loop
+ * was late by > one frame period. */
+static volatile unsigned tx_underruns, rx_overruns;
+static volatile unsigned tx_frames, rx_frames;                  /* ISR counts = the audio clock itself */
+static volatile unsigned long long rx_last_us;
+extern unsigned long long net_micros(void) __attribute__((weak)); /* only when net_mcu.c is linked */
+
 static void dma_setup(uint8_t stream, uint32_t periph, void *mem, uint32_t dir)
 {
     dma_stream_reset(DMA2, stream);
@@ -135,12 +143,14 @@ void aud_spk_start(void)
 
 static void tx_refill(int half)
 {
+    tx_frames++;
     int16_t *dst = &tx_dma[half * AUD_FRAME];
     if (tx_tail != tx_head) {
         for (int i = 0; i < AUD_FRAME; i++) dst[i] = tx_ring[tx_tail][i];
         tx_tail = (tx_tail + 1) % AUD_RING;
     } else {
         for (int i = 0; i < AUD_FRAME; i++) dst[i] = 0;   /* underrun -> silence */
+        tx_underruns++;
     }
 }
 
@@ -192,6 +202,9 @@ void aud_mic_start(void)
 
 static void rx_capture(int half)
 {
+    rx_frames++;
+    if (net_micros) rx_last_us = net_micros();
+    if (rx_ready) rx_overruns++;                            /* previous frame never taken */
     for (int i = 0; i < AUD_FRAME; i++) rx_frame[i] = rx_dma[half * AUD_FRAME + i];
     rx_ready = 1;
 }
@@ -209,6 +222,17 @@ void dma2_stream5_isr(void)
 }
 
 int aud_mic_ready(void) { return rx_ready; }
+
+int aud_spk_free(void)
+{
+    int queued = (tx_head - tx_tail + AUD_RING) % AUD_RING;
+    return (AUD_RING - 1) - queued;
+}
+unsigned aud_spk_underruns(void) { return tx_underruns; }
+unsigned aud_mic_overruns(void)  { return rx_overruns; }
+unsigned aud_mic_frames(void)    { return rx_frames; }
+unsigned aud_spk_frames(void)    { return tx_frames; }
+unsigned long long aud_mic_last_us(void) { return rx_last_us; }
 
 void aud_mic_take_raw(int16_t *out)
 {
