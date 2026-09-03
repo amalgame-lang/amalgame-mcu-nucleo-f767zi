@@ -69,6 +69,14 @@ int net_rx_count(void)
 /* Diagnostic: the derived MAC (see ethernetif.c mac_addr_init) as "aa:bb:cc:dd:ee:ff" —
  * lets two boards on the same LAN confirm they didn't (by 1-in-16M coincidence)
  * derive the same address from their UIDs. */
+/* Diagnostic: elapsed ms since boot (1kHz SysTick) — for throughput measurements
+ * that don't need DWT-cycle precision (DWT_CYCCNT needs an active debug session to
+ * count on this core; useless once the board runs standalone after a plain reset). */
+unsigned int net_millis(void)
+{
+    return lwip_ms;
+}
+
 const char *net_mac_str(void)
 {
     static char buf[18];
