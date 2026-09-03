@@ -14,4 +14,7 @@ void  ethernetif_poll(struct netif *netif);
 extern volatile uint32_t mcnet_rx_frames;
 
 extern volatile uint32_t mcnet_tx_drops;   /* frames refused by eth_tx (TX ring full) */
+void ethernetif_link_poll(struct netif *netif);  /* call from net_poll: PHY link monitor */
+int  ethernetif_link_up(void);                   /* cached link state */
+int  ethernetif_link_speed(void);                /* +100/+10 full, -100/-10 half, 0 down */
 #endif /* MCNET_ETHERNETIF_H */

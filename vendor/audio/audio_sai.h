@@ -3,8 +3,18 @@
 
 #include <stdint.h>
 
-/* 48 kHz, 120-sample (2.5 ms) int16 mono frames — matches the RTP/jitter core. */
-#define AUD_FRAME 120
+/* 48 kHz int16 mono frames. Frame length is a BUILD parameter shared with the AM
+ * core (rtp_core.am reads the same MC_FRAME): 120 = 2.5 ms (default), 48 = 1 ms. */
+#ifndef MC_FRAME
+#define MC_FRAME 120
+#endif
+#define AUD_FRAME MC_FRAME
+/* Software rings (frames) on both sides of the DMA double buffers: 4 = 3 queued =
+ * 7.5 ms of slack at 2.5 ms frames; 2 = 1 queued = lowest latency, needs a loop
+ * that never runs late by a full frame. -DAUD_RING= */
+#ifndef AUD_RING
+#define AUD_RING 4
+#endif
 
 /* Playback: SAI block A (master TX) + DMA circular double buffer. */
 void aud_spk_start(void);

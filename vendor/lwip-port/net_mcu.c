@@ -54,12 +54,25 @@ static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
 void net_poll(void)
 {
     ethernetif_poll(&mcnet_netif);
+    ethernetif_link_poll(&mcnet_netif);
     sys_check_timeouts();
     uint32_t m = ETH_DMAMFBOCR;
     mcnet_rx_missed   += m & ETH_DMAMFBOCR_MFC;
     mcnet_rx_fifo_ovf += (m & ETH_DMAMFBOCR_MFA) >> ETH_DMAMFBOCR_MFA_SHIFT;
 }
 int net_rx_missed(void)   { return (int) mcnet_rx_missed; }
+
+/* Same UID words the MAC is derived from (ethernetif.c), folded to 32 bits. Never
+ * 0 (0 = 'free slot' in the jitter's SSRC table). */
+unsigned int net_uid32(void)
+{
+    const volatile uint32_t *uid = (const volatile uint32_t *) 0x1FF0F420u;
+    uint32_t h = (uid[0] ^ (uid[1] * 2654435761u) ^ (uid[2] * 40503u)) & 0x7fffffffu;
+    /* 31 bits: AM List<int> elements are void* = 32-bit on cortex-m7, so any value
+     * >= 2^31 read back negative and an SSRC would never match its own table entry
+     * (measured 2026-09-03: streams=4, all silent). */
+    return h ? h : 1u;
+}
 int net_rx_fifo_ovf(void) { return (int) mcnet_rx_fifo_ovf; }
 
 /* Diagnostics for bring-up: the acquired IPv4 ("0.0.0.0" until DHCP completes) and
@@ -71,7 +84,12 @@ const char *net_ip_str(void)
 
 int net_link_up(void)
 {
-    return phy_link_isup(0) ? 1 : 0;
+    return ethernetif_link_up();
+}
+
+int net_link_speed(void)
+{
+    return ethernetif_link_speed();
 }
 
 int net_rx_count(void)

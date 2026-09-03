@@ -43,7 +43,6 @@
 #define SAI_xCR1_SAIEN  (1u << 16)
 #define SAI_xCR1_DMAEN  (1u << 17)
 
-#define AUD_RING 4
 
 /* playback: loop producer / TX-DMA-ISR consumer */
 static int16_t          tx_ring[AUD_RING][AUD_FRAME];

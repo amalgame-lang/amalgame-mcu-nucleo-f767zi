@@ -15,6 +15,7 @@
 #include "lwip/etharp.h"
 #include "netif/ethernet.h"
 #include "ethernetif.h"
+#include "net_mcu.h"          /* net_millis() for the link-up wait */
 
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
@@ -129,8 +130,75 @@ static struct pbuf *low_level_input(void)
     return p;
 }
 
+/* ---- PHY (LAN8742A) explicit configuration + link monitor ----------------------
+ * Measured 2026-09-03 (openocd, board stuck after an st-flash reset, 3rd time): BMCR
+ * read back 0x0000 = auto-negotiation DISABLED, forced 10 Mbit/s half-duplex, link
+ * down — while the MAC is hard-coded 100 Mbit/s full-duplex (libopencm3 eth_init).
+ * The two never talk: 0 frames received, DHCP never completes. Writing BMCR=0x1200
+ * by MDIO brought the link up at 100/FD within seconds. Cause = the PHY's MODE
+ * straps sampled wrong at that hardware reset (nRST shared with the MCU). So: never
+ * trust the straps — advertise 10/100 HD/FD, enable+restart AN, wait for the link,
+ * then set the MAC to what was actually negotiated; and keep watching the link. */
+#define PHY_BMCR    0
+#define PHY_BMSR    1
+#define PHY_ANAR    4
+#define PHY_SCSR    31                   /* LAN87xx special control/status */
+#define PHY_BMCR_AN_ENABLE  (1 << 12)
+#define PHY_BMCR_AN_RESTART (1 << 9)
+#define PHY_BMSR_LINK       (1 << 2)
+#define PHY_ANAR_ALL        0x01E1       /* 10HD 10FD 100HD 100FD + IEEE 802.3 selector */
+
+static int  mcnet_link_state = 0;        /* cached: 1 = up */
+static int  mcnet_link_speed = 0;        /* 10 / 100 */
+static int  mcnet_link_fdx   = 0;
+static uint32_t mcnet_link_next_ms = 0;
+static struct netif *mcnet_link_netif = NULL;
+
+static void phy_apply_negotiated(void)
+{
+    uint16_t scsr = eth_smi_read(ETH_PHY, PHY_SCSR);
+    int spd = (scsr >> 2) & 0x7;          /* 001=10HD 101=10FD 010=100HD 110=100FD */
+    mcnet_link_speed = (spd & 0x2) ? 100 : 10;
+    mcnet_link_fdx   = (spd & 0x4) ? 1 : 0;
+    uint32_t cr = ETH_MACCR;
+    if (mcnet_link_speed == 100) cr |= ETH_MACCR_FES; else cr &= ~ETH_MACCR_FES;
+    if (mcnet_link_fdx)          cr |= ETH_MACCR_DM;  else cr &= ~ETH_MACCR_DM;
+    ETH_MACCR = cr;
+}
+
+static void phy_configure(void)
+{
+    eth_smi_write(ETH_PHY, PHY_ANAR, PHY_ANAR_ALL);
+    eth_smi_write(ETH_PHY, PHY_BMCR, PHY_BMCR_AN_ENABLE | PHY_BMCR_AN_RESTART);
+    uint32_t t0 = net_millis();
+    while (net_millis() - t0 < 3000u) {   /* typical AN completes in ~1.5 s */
+        if (eth_smi_read(ETH_PHY, PHY_BMSR) & PHY_BMSR_LINK) break;
+    }
+}
+
+/* Poll the link every 250 ms; tell lwIP about transitions (it re-runs DHCP itself). */
+void ethernetif_link_poll(struct netif *netif)
+{
+    uint32_t now = net_millis();
+    if ((int32_t)(now - mcnet_link_next_ms) < 0) return;
+    mcnet_link_next_ms = now + 250u;
+    int up = (eth_smi_read(ETH_PHY, PHY_BMSR) & PHY_BMSR_LINK) ? 1 : 0;
+    if (up == mcnet_link_state) return;
+    mcnet_link_state = up;
+    if (up) {
+        phy_apply_negotiated();
+        netif_set_link_up(netif);
+    } else {
+        netif_set_link_down(netif);
+    }
+}
+
+int ethernetif_link_up(void)    { return mcnet_link_state; }
+int ethernetif_link_speed(void) { return mcnet_link_state ? mcnet_link_speed * (mcnet_link_fdx ? 1 : -1) : 0; }
+
 err_t ethernetif_init(struct netif *netif)
 {
+    mcnet_link_netif = netif;
     mac_addr_init();
     netif->name[0] = 'e';
     netif->name[1] = 'n';
@@ -141,7 +209,7 @@ err_t ethernetif_init(struct netif *netif)
         netif->hwaddr[i] = mac_addr[i];
     }
     netif->mtu = 1500;
-    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
+    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP;   /* link state set by the monitor */
 
     /* RMII select + GPIO MUST happen BEFORE the MAC clocks are enabled — the
      * MII/RMII choice (SYSCFG_PMC) is sampled as the MAC comes out of reset; set it
@@ -158,7 +226,9 @@ err_t ethernetif_init(struct netif *netif)
     eth_set_mac(mac_addr);
     eth_desc_init(eth_desc_buffer, ETH_TXBUFNB, ETH_RXBUFNB, ETH_BUF_SZ, ETH_BUF_SZ, false);
     phy_reset(ETH_PHY);
+    phy_configure();
     eth_start();
+    mcnet_link_next_ms = net_millis();   /* first monitor pass right away (sets link up if AN done) */
     return ERR_OK;
 }
 
