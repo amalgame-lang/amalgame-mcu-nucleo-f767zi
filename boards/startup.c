@@ -54,7 +54,21 @@ vector_fn const vector_table[16 + 104] = {
     [16 + 68] = dma2_stream5_isr,         /* DMA2_STREAM5 — SAI block B RX  */
 };
 
+/* Enable the FPU coprocessor (CP10+CP11 full access) before any code runs. Without
+ * this, ANY compiler-emitted VFP instruction (explicit float math, or GCC picking a
+ * VLDR/VSTR block copy for e.g. a growing List<int>'s realloc) traps as a UsageFault
+ * that escalates to HardFault (Default_Handler = infinite loop, so total silence —
+ * no banner, nothing). -mfloat-abi=hard -mfpu=fpv5-d16 is used project-wide, so this
+ * must run first, unconditionally — not just for firmware that "uses floats". */
+#define SCB_CPACR (*(volatile uint32_t *) 0xE000ED88u)
+static void Fpu_Enable(void) {
+    SCB_CPACR |= (0xFu << 20);   /* CP10 + CP11: full access */
+    __asm volatile ("dsb");
+    __asm volatile ("isb");
+}
+
 void Reset_Handler(void) {
+    Fpu_Enable();
     uint32_t *src = &_sidata, *dst = &_sdata;
     while (dst < &_edata) *dst++ = *src++;
     for (dst = &_sbss; dst < &_ebss; ) *dst++ = 0;
