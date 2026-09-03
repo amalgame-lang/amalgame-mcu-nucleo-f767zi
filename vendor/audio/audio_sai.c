@@ -50,10 +50,16 @@ static int16_t          tx_ring[AUD_RING][AUD_FRAME];
 static volatile int     tx_head, tx_tail;
 static int16_t          tx_dma[2 * AUD_FRAME];
 
-/* capture: RX-DMA-ISR producer / loop consumer */
+/* capture: RX-DMA-ISR producer / loop consumer. A RING (not a single frame): the
+ * block-B capture ISR lands ~170 us AFTER the block-A playback ISR that unblocks
+ * aud_spk_push_raw() (the TX FIFO runs ahead of the wire), so a loop that checks
+ * aud_mic_ready() right after Push() sat exactly on that edge and lost ~6 frames/s
+ * (measured 2026-09-03, full_p2p.am: mic overruns -> sender seq rate 394/s vs 400
+ * pops/s at the peer -> periodic jitter re-anchor -> 55 ms of silence every 2 s).
+ * With a ring, a late take just delays the frame by one tick instead of losing it. */
 static int16_t          rx_dma[2 * AUD_FRAME];
-static int16_t          rx_frame[AUD_FRAME];
-static volatile int     rx_ready;
+static int16_t          rx_ring[AUD_RING][AUD_FRAME];
+static volatile int     rx_head, rx_tail;   /* head = ISR producer, tail = loop consumer */
 
 /* diagnostics: every underrun = 2.5 ms of injected silence (audible click); every
  * overrun = a captured mic frame lost before the loop took it. Both mean the loop
@@ -204,9 +210,10 @@ static void rx_capture(int half)
 {
     rx_frames++;
     if (net_micros) rx_last_us = net_micros();
-    if (rx_ready) rx_overruns++;                            /* previous frame never taken */
-    for (int i = 0; i < AUD_FRAME; i++) rx_frame[i] = rx_dma[half * AUD_FRAME + i];
-    rx_ready = 1;
+    int next = (rx_head + 1) % AUD_RING;
+    if (next == rx_tail) { rx_overruns++; return; }         /* ring full: frame lost */
+    for (int i = 0; i < AUD_FRAME; i++) rx_ring[rx_head][i] = rx_dma[half * AUD_FRAME + i];
+    rx_head = next;
 }
 
 void dma2_stream5_isr(void)
@@ -221,7 +228,7 @@ void dma2_stream5_isr(void)
     }
 }
 
-int aud_mic_ready(void) { return rx_ready; }
+int aud_mic_ready(void) { return rx_head != rx_tail; }
 
 int aud_spk_free(void)
 {
@@ -236,6 +243,7 @@ unsigned long long aud_mic_last_us(void) { return rx_last_us; }
 
 void aud_mic_take_raw(int16_t *out)
 {
-    rx_ready = 0;
-    for (int i = 0; i < AUD_FRAME; i++) out[i] = rx_frame[i];
+    if (rx_head == rx_tail) { for (int i = 0; i < AUD_FRAME; i++) out[i] = 0; return; }
+    for (int i = 0; i < AUD_FRAME; i++) out[i] = rx_ring[rx_tail][i];
+    rx_tail = (rx_tail + 1) % AUD_RING;
 }
