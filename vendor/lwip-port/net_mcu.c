@@ -43,11 +43,24 @@ void net_init(void)
     dhcp_start(&mcnet_netif);
 }
 
+/* MAC-level RX loss, read from ETH_DMAMFBOCR (read clears it): frames the DMA
+ * dropped because no RX descriptor was free (MFC, host too slow / burst > ring),
+ * and frames lost to RX FIFO overflow (MFA). Invisible to lwIP otherwise. */
+static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
+#include <libopencm3/ethernet/mac_stm32fxx7.h>
+#ifndef ETH_DMAMFBOCR_MFA_SHIFT
+#define ETH_DMAMFBOCR_MFA_SHIFT 17   /* RM0410: MFA = bits 27:17 (missing from libopencm3's header) */
+#endif
 void net_poll(void)
 {
     ethernetif_poll(&mcnet_netif);
     sys_check_timeouts();
+    uint32_t m = ETH_DMAMFBOCR;
+    mcnet_rx_missed   += m & ETH_DMAMFBOCR_MFC;
+    mcnet_rx_fifo_ovf += (m & ETH_DMAMFBOCR_MFA) >> ETH_DMAMFBOCR_MFA_SHIFT;
 }
+int net_rx_missed(void)   { return (int) mcnet_rx_missed; }
+int net_rx_fifo_ovf(void) { return (int) mcnet_rx_fifo_ovf; }
 
 /* Diagnostics for bring-up: the acquired IPv4 ("0.0.0.0" until DHCP completes) and
  * the PHY link state. */
