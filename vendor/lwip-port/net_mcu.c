@@ -65,3 +65,21 @@ int net_rx_count(void)
 {
     return (int) mcnet_rx_frames;
 }
+
+/* Diagnostic: the derived MAC (see ethernetif.c mac_addr_init) as "aa:bb:cc:dd:ee:ff" —
+ * lets two boards on the same LAN confirm they didn't (by 1-in-16M coincidence)
+ * derive the same address from their UIDs. */
+const char *net_mac_str(void)
+{
+    static char buf[18];
+    const uint8_t *h = mcnet_netif.hwaddr;
+    static const char hex[] = "0123456789abcdef";
+    int p = 0;
+    for (int i = 0; i < 6; i++) {
+        buf[p++] = hex[(h[i] >> 4) & 0xF];
+        buf[p++] = hex[h[i] & 0xF];
+        if (i < 5) { buf[p++] = ':'; }
+    }
+    buf[p] = 0;
+    return buf;
+}

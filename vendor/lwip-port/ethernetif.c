@@ -39,8 +39,25 @@
 static uint8_t eth_desc_buffer[(ETH_TXBUFNB + ETH_RXBUFNB) * (ETH_BUF_SZ + 32)]
     __attribute__((aligned(4)));
 
-/* Locally-administered MAC (bit 1 of first octet set, multicast bit clear). */
+/* Locally-administered MAC (bit 1 of first octet set, multicast bit clear). The
+ * last 3 octets are overwritten at init from the STM32's 96-bit factory unique ID
+ * (mac_addr_init) — this was a FIXED value, identical on every board running this
+ * firmware, which works fine with exactly one board on a network but silently
+ * collides (same MAC on two ports -> DHCP/ARP chaos, only one board ever gets an
+ * IP) as soon as two boards join the same LAN. */
 static uint8_t mac_addr[6] = { 0x02, 0x00, 0x00, 0x4D, 0x42, 0x01 };
+
+/* STM32F7 96-bit unique device ID register (RM0410 §41.1). */
+#define STM32_UID_BASE 0x1FF0F420u
+
+static void mac_addr_init(void)
+{
+    const volatile uint32_t *uid = (const volatile uint32_t *) STM32_UID_BASE;
+    uint32_t mix = uid[0] ^ uid[1] ^ uid[2];
+    mac_addr[3] = (uint8_t) (mix >> 16);
+    mac_addr[4] = (uint8_t) (mix >> 8);
+    mac_addr[5] = (uint8_t) mix;
+}
 
 /* Nucleo-F767ZI RMII pinout, all AF11:
  *   PA1 REF_CLK, PA2 MDIO, PA7 CRS_DV, PC1 MDC, PC4 RXD0, PC5 RXD1,
@@ -98,6 +115,7 @@ static struct pbuf *low_level_input(void)
 
 err_t ethernetif_init(struct netif *netif)
 {
+    mac_addr_init();
     netif->name[0] = 'e';
     netif->name[1] = 'n';
     netif->output = etharp_output;

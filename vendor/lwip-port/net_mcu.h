@@ -11,5 +11,6 @@ void net_poll(void);
 const char *net_ip_str(void);   /* "0.0.0.0" until DHCP completes */
 int         net_link_up(void);  /* PHY link state */
 int         net_rx_count(void); /* frames received from the MAC (0 = RX path dead) */
+const char *net_mac_str(void);  /* derived MAC, "aa:bb:cc:dd:ee:ff" */
 
 #endif /* MCNET_NET_MCU_H */
