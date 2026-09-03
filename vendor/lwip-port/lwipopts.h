@@ -28,11 +28,17 @@
 #define MEM_LIBC_MALLOC             0
 #define MEMP_MEM_MALLOC             0
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    (8 * 1024)
-#define MEMP_NUM_PBUF               16
+#define MEM_SIZE                    (12 * 1024)
+#define MEMP_NUM_PBUF               24
 #define MEMP_NUM_UDP_PCB            6
 #define MEMP_NUM_SYS_TIMEOUT        8
-#define PBUF_POOL_SIZE              16
+#define PBUF_POOL_SIZE              24   // was 16: full-duplex RTP (~400 pkts/s in)
+                                          // + DHCP control traffic share this one
+                                          // pool; too small starved DHCP renewals
+                                          // (IP reverting to 0.0.0.0 under load) and
+                                          // likely contributed to dropped/corrupted
+                                          // audio frames under load. (Constrained by
+                                          // the ~384K RAM region — see MCNET_RING.)
 #define PBUF_POOL_BUFSIZE           1536
 
 /* netif */
