@@ -56,8 +56,10 @@ static int16_t          tx_dma[2 * AUD_FRAME];
  * (measured 2026-09-03, full_p2p.am: mic overruns -> sender seq rate 394/s vs 400
  * pops/s at the peer -> periodic jitter re-anchor -> 55 ms of silence every 2 s).
  * With a ring, a late take just delays the frame by one tick instead of losing it. */
-static int16_t          rx_dma[2 * AUD_FRAME];
-static int16_t          rx_ring[AUD_RING][AUD_FRAME];
+/* Block B now captures BOTH slots (MONO bit cleared): the DMA delivers L,R interleaved,
+ * 2 x AUD_FRAME samples per frame period; the ring keeps them de-interleaved. */
+static int16_t          rx_dma[2 * 2 * AUD_FRAME];
+static int16_t          rx_ring[AUD_RING][2][AUD_FRAME];   /* [slot][0=L mic, 1=R instrument] */
 static volatile int     rx_head, rx_tail;   /* head = ISR producer, tail = loop consumer */
 
 /* diagnostics: every underrun = 2.5 ms of injected silence (audible click); every
@@ -68,13 +70,13 @@ static volatile unsigned tx_frames, rx_frames;                  /* ISR counts = 
 static volatile unsigned long long rx_last_us;
 extern unsigned long long net_micros(void) __attribute__((weak)); /* only when net_mcu.c is linked */
 
-static void dma_setup(uint8_t stream, uint32_t periph, void *mem, uint32_t dir)
+static void dma_setup2(uint8_t stream, uint32_t periph, void *mem, uint32_t dir, uint32_t ndata)
 {
     dma_stream_reset(DMA2, stream);
     dma_channel_select(DMA2, stream, DMA_SxCR_CHSEL_0);
     dma_set_peripheral_address(DMA2, stream, periph);
     dma_set_memory_address(DMA2, stream, (uint32_t) mem);
-    dma_set_number_of_data(DMA2, stream, 2 * AUD_FRAME);
+    dma_set_number_of_data(DMA2, stream, ndata);
     dma_set_transfer_mode(DMA2, stream, dir);
     dma_set_peripheral_size(DMA2, stream, DMA_SxCR_PSIZE_16BIT);
     dma_set_memory_size(DMA2, stream, DMA_SxCR_MSIZE_16BIT);
@@ -83,6 +85,10 @@ static void dma_setup(uint8_t stream, uint32_t periph, void *mem, uint32_t dir)
     dma_enable_half_transfer_interrupt(DMA2, stream);
     dma_enable_transfer_complete_interrupt(DMA2, stream);
     dma_enable_stream(DMA2, stream);
+}
+static void dma_setup(uint8_t stream, uint32_t periph, void *mem, uint32_t dir)
+{
+    dma_setup2(stream, periph, mem, dir, 2 * AUD_FRAME);
 }
 
 /* SAI1 pins on GPIOE, AF6. Block A: PE2 MCLK, PE4 FS, PE5 BCLK, PE6 SD_A. */
@@ -194,11 +200,11 @@ void aud_mic_start(void)
      *   BCR1  : MODE=11(SlaveRX) PRTCFG=00 DS=100(16-bit) SYNCEN=01(sync w/ block A) MONO=1
      *   BFRCR : FRL=63 FSALL=31 FSDEF=1 FSPOL=0 FSOFF=1 (64-fS frame, matches block A)
      *   BSLOTR: SLOTSZ=10(32-bit) NBSLOT=1(=2 slots) SLOTEN=slots 0+1 (matches block A) */
-    SAI_BCR1   = 0x00001483u;   /* slave RX, 16-bit, mono, synchronous */
+    SAI_BCR1   = 0x00000483u;   /* slave RX, 16-bit, STEREO (MONO=0: both slots stored), synchronous */
     SAI_BFRCR  = 0x00031F3Fu;   /* 64-fS frame, FSOFF=0 FSPOL=1 = LEFT-JUSTIFIED (match block A) */
     SAI_BSLOTR = 0x00030180u;   /* 32-bit slots, 2 slots, slots 0+1 enabled */
 
-    dma_setup(DMA_STREAM5, (uint32_t) &SAI_BDR, rx_dma, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
+    dma_setup2(DMA_STREAM5, (uint32_t) &SAI_BDR, rx_dma, DMA_SxCR_DIR_PERIPHERAL_TO_MEM, 2 * 2 * AUD_FRAME);
     nvic_enable_irq(NVIC_DMA2_STREAM5_IRQ);
 
     SAI_BCR1 |= SAI_xCR1_DMAEN;
@@ -211,7 +217,8 @@ static void rx_capture(int half)
     if (net_micros) rx_last_us = net_micros();
     int next = (rx_head + 1) % AUD_RING;
     if (next == rx_tail) { rx_overruns++; return; }         /* ring full: frame lost */
-    for (int i = 0; i < AUD_FRAME; i++) rx_ring[rx_head][i] = rx_dma[half * AUD_FRAME + i];
+    const int16_t *src = &rx_dma[half * 2 * AUD_FRAME];
+    for (int i = 0; i < AUD_FRAME; i++) { rx_ring[rx_head][0][i] = src[2 * i]; rx_ring[rx_head][1][i] = src[2 * i + 1]; }
     rx_head = next;
 }
 
@@ -240,9 +247,10 @@ unsigned aud_mic_frames(void)    { return rx_frames; }
 unsigned aud_spk_frames(void)    { return tx_frames; }
 unsigned long long aud_mic_last_us(void) { return rx_last_us; }
 
-void aud_mic_take_raw(int16_t *out)
+void aud_mic_take_raw2(int16_t *l, int16_t *r)
 {
-    if (rx_head == rx_tail) { for (int i = 0; i < AUD_FRAME; i++) out[i] = 0; return; }
-    for (int i = 0; i < AUD_FRAME; i++) out[i] = rx_ring[rx_tail][i];
+    if (rx_head == rx_tail) { for (int i = 0; i < AUD_FRAME; i++) { l[i] = 0; if (r) r[i] = 0; } return; }
+    for (int i = 0; i < AUD_FRAME; i++) { l[i] = rx_ring[rx_tail][0][i]; if (r) r[i] = rx_ring[rx_tail][1][i]; }
     rx_tail = (rx_tail + 1) % AUD_RING;
 }
+void aud_mic_take_raw(int16_t *out) { aud_mic_take_raw2(out, 0); }

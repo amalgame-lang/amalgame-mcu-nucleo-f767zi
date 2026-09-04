@@ -25,7 +25,8 @@ unsigned aud_spk_underruns(void);               /* DMA refills that found the ri
 /* Capture: SAI block B (master RX) + DMA circular double buffer. */
 void aud_mic_start(void);
 int  aud_mic_ready(void);                       /* 1 if a captured frame waits */
-void aud_mic_take_raw(int16_t *out);            /* copy AUD_FRAME samples out  */
+void aud_mic_take_raw(int16_t *out);            /* copy AUD_FRAME samples of the LEFT input (mic) */
+void aud_mic_take_raw2(int16_t *l, int16_t *r); /* both inputs: L = VINL (mic), R = VINR (instrument) */
 unsigned aud_mic_overruns(void);                /* captures that overwrote a frame not yet taken (lost) */
 unsigned aud_mic_frames(void);                  /* capture ISR count = frames the DMA produced (audio clock) */
 unsigned aud_spk_frames(void);                  /* playback refill ISR count (audio clock) */
