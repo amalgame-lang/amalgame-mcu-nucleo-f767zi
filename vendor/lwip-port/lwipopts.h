@@ -13,7 +13,7 @@
 /* Protocols */
 #define LWIP_IPV4                   1
 #define LWIP_IPV6                   0
-#define LWIP_TCP                    0
+#define LWIP_TCP                    1   /* control channel: WebSocket client (ws_client.c), 2026-09-04 */
 #define LWIP_UDP                    1
 #define LWIP_RAW                    0
 #define LWIP_ARP                    1
@@ -32,6 +32,17 @@
 #define MEMP_NUM_PBUF               24
 #define MEMP_NUM_UDP_PCB            6
 #define MEMP_NUM_SYS_TIMEOUT        8
+/* TCP sized for ONE small control connection (WebSocket to the server): tiny
+ * window and send buffer, no out-of-order queue — a few KB of RAM in total. */
+#define MEMP_NUM_TCP_PCB            2
+#define MEMP_NUM_TCP_PCB_LISTEN     1
+#define MEMP_NUM_TCP_SEG            12
+#define TCP_MSS                     536
+#define TCP_SND_BUF                 (2 * TCP_MSS)
+#define TCP_SND_QUEUELEN            8
+#define TCP_WND                     (2 * TCP_MSS)
+#define TCP_QUEUE_OOSEQ             0
+#define LWIP_TCP_KEEPALIVE          1
 #define PBUF_POOL_SIZE              24   // was 16: full-duplex RTP (~400 pkts/s in)
                                           // + DHCP control traffic share this one
                                           // pool; too small starved DHCP renewals

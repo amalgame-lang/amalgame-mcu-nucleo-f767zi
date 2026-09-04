@@ -1,0 +1,184 @@
+/* ws_client.c — see ws_client.h. Single connection, static buffers, no malloc. */
+#include "ws_client.h"
+#include "net_mcu.h"
+#include "lwip/tcp.h"
+#include "lwip/ip_addr.h"
+#include <string.h>
+
+#define WS_RX_BUF   1024      /* one server line (status/commands are < 300 B) */
+#define WS_TX_MAX   700
+#define WS_HS_MAX   400
+
+enum { WS_IDLE, WS_CONNECTING, WS_HANDSHAKE, WS_OPEN, WS_CLOSED };
+
+static struct tcp_pcb *ws_pcb;
+static int      ws_state = WS_IDLE;
+static ip_addr_t ws_ip; static uint16_t ws_port;
+static char     ws_path[64], ws_host[64], ws_hello[200];
+static ws_line_cb ws_on_line;
+static unsigned char ws_rx[WS_RX_BUF]; static int ws_rx_len;
+static uint32_t ws_next_try_ms, ws_backoff_ms = 2000;
+static uint32_t ws_last_rx_ms, ws_ping_sent_ms;
+static uint32_t ws_reconnects, ws_frames;
+static uint32_t ws_rand_state;
+
+static uint32_t ws_rand(void) {           /* xorshift, seeded with UID + time */
+    if (!ws_rand_state) ws_rand_state = net_uid32() ^ (net_millis() * 2654435761u) ^ 0x9E3779B9u;
+    ws_rand_state ^= ws_rand_state << 13; ws_rand_state ^= ws_rand_state >> 17; ws_rand_state ^= ws_rand_state << 5;
+    return ws_rand_state;
+}
+
+static void ws_close_pcb(void) {
+    if (ws_pcb) {
+        tcp_arg(ws_pcb, NULL); tcp_recv(ws_pcb, NULL); tcp_err(ws_pcb, NULL); tcp_sent(ws_pcb, NULL); tcp_poll(ws_pcb, NULL, 0);
+        if (tcp_close(ws_pcb) != ERR_OK) tcp_abort(ws_pcb);
+        ws_pcb = NULL;
+    }
+}
+
+static void ws_schedule_retry(void) {
+    ws_close_pcb();
+    ws_state = WS_CLOSED;
+    ws_rx_len = 0;
+    ws_next_try_ms = net_millis() + ws_backoff_ms;
+    if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
+}
+
+static void ws_err_cb(void *arg, err_t err) {
+    (void) arg; (void) err;
+    ws_pcb = NULL;                            /* already freed by lwIP */
+    ws_state = WS_CLOSED; ws_rx_len = 0;
+    ws_next_try_ms = net_millis() + ws_backoff_ms;
+    if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
+}
+
+/* RFC 6455 client frame: FIN + opcode, MASK bit, masked payload. */
+static int ws_send_frame(int opcode, const unsigned char *data, int n) {
+    if (!ws_pcb || ws_state != WS_OPEN || n > WS_TX_MAX) return 0;
+    unsigned char buf[WS_TX_MAX + 8]; int p = 0;
+    buf[p++] = (unsigned char) (0x80 | opcode);
+    if (n < 126) buf[p++] = (unsigned char) (0x80 | n);
+    else { buf[p++] = 0x80 | 126; buf[p++] = (unsigned char) (n >> 8); buf[p++] = (unsigned char) n; }
+    uint32_t r = ws_rand(); unsigned char mask[4] = { r, r >> 8, r >> 16, r >> 24 };
+    memcpy(&buf[p], mask, 4); p += 4;
+    for (int i = 0; i < n; i++) buf[p++] = data[i] ^ mask[i & 3];
+    if (tcp_sndbuf(ws_pcb) < (u16_t) p) return 0;
+    if (tcp_write(ws_pcb, buf, (u16_t) p, TCP_WRITE_FLAG_COPY) != ERR_OK) return 0;
+    tcp_output(ws_pcb);
+    return 1;
+}
+
+int ws_client_send_text(const char *s) { return ws_send_frame(1, (const unsigned char *) s, (int) strlen(s)); }
+
+/* freestanding: no snprintf (it drags newlib syscalls in) */
+static int ws_cat(char *d, const char *s) { int n = 0; while (s[n]) { d[n] = s[n]; n++; } d[n] = 0; return n; }
+static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static void ws_key(char out[25]) {          /* base64 of 16 random bytes */
+    unsigned char k[16]; for (int i = 0; i < 16; i += 4) { uint32_t r = ws_rand(); memcpy(&k[i], &r, 4); }
+    int o = 0;
+    for (int i = 0; i < 15; i += 3) {
+        uint32_t v = (k[i] << 16) | (k[i+1] << 8) | k[i+2];
+        out[o++] = b64[(v >> 18) & 63]; out[o++] = b64[(v >> 12) & 63]; out[o++] = b64[(v >> 6) & 63]; out[o++] = b64[v & 63];
+    }
+    uint32_t v = k[15] << 16; out[o++] = b64[(v >> 18) & 63]; out[o++] = b64[(v >> 12) & 63]; out[o++] = '='; out[o++] = '='; out[o] = 0;
+}
+
+static err_t ws_connected_cb(void *arg, struct tcp_pcb *pcb, err_t err) {
+    (void) arg;
+    if (err != ERR_OK) { ws_schedule_retry(); return err; }
+    char key[25]; ws_key(key);
+    char hs[WS_HS_MAX]; int n = 0;
+    n += ws_cat(hs + n, "GET "); n += ws_cat(hs + n, ws_path); n += ws_cat(hs + n, " HTTP/1.1\r\nHost: "); n += ws_cat(hs + n, ws_host); n += ws_cat(hs + n, "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n");
+    n += ws_cat(hs + n, "Sec-WebSocket-Key: "); n += ws_cat(hs + n, key); n += ws_cat(hs + n, "\r\nSec-WebSocket-Version: 13\r\n\r\n");
+    if (tcp_write(pcb, hs, (u16_t) n, TCP_WRITE_FLAG_COPY) != ERR_OK) { ws_schedule_retry(); return ERR_OK; }
+    tcp_output(pcb);
+    ws_state = WS_HANDSHAKE; ws_rx_len = 0; ws_last_rx_ms = net_millis();
+    return ERR_OK;
+}
+
+/* Consume complete frames from ws_rx; returns when a partial frame remains. */
+static void ws_parse_frames(void) {
+    for (;;) {
+        if (ws_rx_len < 2) return;
+        int op = ws_rx[0] & 0x0F, hdr = 2; uint32_t n = ws_rx[1] & 0x7F; int masked = ws_rx[1] & 0x80;
+        if (n == 126) { if (ws_rx_len < 4) return; n = (ws_rx[2] << 8) | ws_rx[3]; hdr = 4; }
+        else if (n == 127) { ws_schedule_retry(); return; }         /* never from our server */
+        if (masked) hdr += 4;
+        if (hdr + n > (uint32_t) WS_RX_BUF) { ws_schedule_retry(); return; } /* oversized: resync by reconnect */
+        if ((uint32_t) ws_rx_len < hdr + n) return;
+        unsigned char *pl = &ws_rx[hdr];
+        if (masked) { unsigned char *m = &ws_rx[hdr - 4]; for (uint32_t i = 0; i < n; i++) pl[i] ^= m[i & 3]; }
+        ws_frames++;
+        if (op == 1 && ws_on_line) { unsigned char save = pl[n]; pl[n] = 0; ws_on_line((const char *) pl, (int) n); pl[n] = save; }
+        else if (op == 9) ws_send_frame(10, pl, (int) n);            /* ping -> pong */
+        else if (op == 8) { ws_schedule_retry(); return; }
+        int used = hdr + (int) n;
+        memmove(ws_rx, ws_rx + used, ws_rx_len - used); ws_rx_len -= used;
+    }
+}
+
+static err_t ws_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
+    (void) arg; (void) err;
+    if (!p) { ws_schedule_retry(); return ERR_OK; }              /* remote close */
+    int room = WS_RX_BUF - ws_rx_len;
+    int take = p->tot_len < room ? p->tot_len : room;
+    pbuf_copy_partial(p, ws_rx + ws_rx_len, (u16_t) take, 0);
+    ws_rx_len += take;
+    tcp_recved(pcb, p->tot_len);
+    pbuf_free(p);
+    ws_last_rx_ms = net_millis();
+    if (ws_state == WS_HANDSHAKE) {
+        ws_rx[ws_rx_len < WS_RX_BUF ? ws_rx_len : WS_RX_BUF - 1] = 0;
+        char *end = strstr((char *) ws_rx, "\r\n\r\n");
+        if (!end) { if (ws_rx_len >= WS_RX_BUF - 1) ws_schedule_retry(); return ERR_OK; }
+        if (!strstr((char *) ws_rx, " 101 ")) { ws_schedule_retry(); return ERR_OK; }
+        int used = (int) (end + 4 - (char *) ws_rx);
+        memmove(ws_rx, ws_rx + used, ws_rx_len - used); ws_rx_len -= used;
+        ws_state = WS_OPEN; ws_backoff_ms = 2000; ws_ping_sent_ms = 0;
+        if (ws_hello[0]) ws_client_send_text(ws_hello);
+    }
+    if (ws_state == WS_OPEN) ws_parse_frames();
+    return ERR_OK;
+}
+
+static void ws_connect(void) {
+    ws_close_pcb();
+    ws_pcb = tcp_new();
+    if (!ws_pcb) { ws_schedule_retry(); return; }
+    tcp_err(ws_pcb, ws_err_cb);
+    tcp_recv(ws_pcb, ws_recv_cb);
+    ws_state = WS_CONNECTING; ws_rx_len = 0;
+    ws_reconnects++;
+    if (tcp_connect(ws_pcb, &ws_ip, ws_port, ws_connected_cb) != ERR_OK) ws_schedule_retry();
+}
+
+void ws_client_start(const char *ip, uint16_t port, const char *path, const char *host, const char *hello, ws_line_cb on_line) {
+    ws_client_stop();
+    ipaddr_aton(ip, &ws_ip); ws_port = port; ws_on_line = on_line;
+    strncpy(ws_path, path ? path : "/", sizeof ws_path - 1);
+    strncpy(ws_host, host ? host : ip, sizeof ws_host - 1);
+    if (hello) strncpy(ws_hello, hello, sizeof ws_hello - 1); else ws_hello[0] = 0;
+    ws_backoff_ms = 2000; ws_reconnects = 0;
+    ws_state = WS_CLOSED; ws_next_try_ms = net_millis();     /* connect on the next poll */
+}
+
+void ws_client_stop(void) { ws_close_pcb(); ws_state = WS_IDLE; ws_rx_len = 0; }
+
+void ws_client_poll(void) {
+    uint32_t now = net_millis();
+    if (ws_state == WS_CLOSED && (int32_t) (now - ws_next_try_ms) >= 0) { ws_connect(); return; }
+    if (ws_state == WS_CONNECTING || ws_state == WS_HANDSHAKE) {
+        if (now - ws_last_rx_ms > 10000 && ws_state == WS_HANDSHAKE) ws_schedule_retry();
+        return;
+    }
+    if (ws_state == WS_OPEN) {
+        /* liveness: ping after 20 s of silence, give up 10 s later */
+        if (now - ws_last_rx_ms > 20000 && !ws_ping_sent_ms) { ws_send_frame(9, (const unsigned char *) "mc", 2); ws_ping_sent_ms = now; }
+        if (ws_ping_sent_ms && now - ws_ping_sent_ms > 10000) ws_schedule_retry();
+        if (ws_ping_sent_ms && ws_last_rx_ms > ws_ping_sent_ms) ws_ping_sent_ms = 0;
+    }
+}
+
+int ws_client_is_open(void) { return ws_state == WS_OPEN; }
+uint32_t ws_client_reconnects(void) { return ws_reconnects; }
+uint32_t ws_client_rx_frames(void) { return ws_frames; }
