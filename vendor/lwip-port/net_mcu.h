@@ -15,6 +15,8 @@ int         net_rx_count(void); /* frames received from the MAC (0 = RX path dea
 int         net_tx_drops(void); /* frames refused by eth_tx (TX descriptor ring full) */
 int         net_rx_missed(void);   /* MAC: frames dropped, no free RX descriptor (ETH_DMAMFBOCR.MFC) */
 int         net_rx_fifo_ovf(void); /* MAC: frames dropped, RX FIFO overflow (ETH_DMAMFBOCR.MFA) */
+int         net_rx_crc_errors(void);   /* MAC MMC: received frames with CRC error */
+int         net_rx_align_errors(void); /* MAC MMC: received frames with alignment error */
 unsigned int net_uid32(void);      /* 32-bit hash of the STM32 96-bit UID (box identity / RTP SSRC) */
 const char *net_mac_str(void);  /* derived MAC, "aa:bb:cc:dd:ee:ff" */
 unsigned int net_millis(void);  /* elapsed ms since boot (1kHz SysTick) */

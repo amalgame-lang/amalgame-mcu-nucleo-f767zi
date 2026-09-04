@@ -61,6 +61,10 @@ void net_poll(void)
     mcnet_rx_fifo_ovf += (m & ETH_DMAMFBOCR_MFA) >> ETH_DMAMFBOCR_MFA_SHIFT;
 }
 int net_rx_missed(void)   { return (int) mcnet_rx_missed; }
+/* MMC counters (RM0410): received frames with CRC error / alignment error — frames the
+ * MAC silently drops. Distinguishes 'the switch never sent it' from 'it arrived corrupt'. */
+int net_rx_crc_errors(void)   { return (int) *(volatile uint32_t *) (0x40028000u + 0x194u); }
+int net_rx_align_errors(void) { return (int) *(volatile uint32_t *) (0x40028000u + 0x198u); }
 
 /* Same UID words the MAC is derived from (ethernetif.c), folded to 32 bits. Never
  * 0 (0 = 'free slot' in the jitter's SSRC table). */
