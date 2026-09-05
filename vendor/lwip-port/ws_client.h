@@ -24,4 +24,8 @@ int ws_client_set_tls(int on, const char *sni);
 int ws_client_is_tls(void);
 /* profiling: µs spent in the last send, split sndbuf / write (TLS encrypt) / output (tcp_output) */
 extern uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;
+/* TLS session resumption state: a session is saved after each successful handshake and offered on reconnect */
+int ws_client_tls_session_saved(void);
+uint32_t ws_client_tls_resumed_tries(void);
+int ws_client_tls_session_id_len(void);
 #endif

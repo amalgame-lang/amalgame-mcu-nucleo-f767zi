@@ -48,6 +48,19 @@ static int ws_tls; static char ws_sni[64]; static struct altcp_tls_config *ws_tl
 enum { WS_IDLE, WS_CONNECTING, WS_HANDSHAKE, WS_OPEN, WS_CLOSED };
 
 static WS_PCB *ws_pcb;
+#if LWIP_ALTCP
+/* TLS session resumption: the first handshake costs ~2.4 s of blocking crypto (RSA-4096 + ECDHE on the M7);
+ * a resumed one (session ID, OpenSSL server cache) skips it. Saved once the WebSocket is open, reused on
+ * every reconnect to the same server, dropped when ip/port/sni change. */
+static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries;
+static void ws_tls_session_drop(void) { if (ws_tls_sess_ok) { altcp_tls_free_session(&ws_tls_sess); ws_tls_sess_ok = 0; } }
+static void ws_tls_session_save(void) {
+    if (!ws_tls || !ws_pcb) return;
+    ws_tls_session_drop();
+    altcp_tls_init_session(&ws_tls_sess);
+    if (altcp_tls_get_session(ws_pcb, &ws_tls_sess) == ERR_OK) ws_tls_sess_ok = 1;
+}
+#endif
 static int      ws_state = WS_IDLE;
 static ip_addr_t ws_ip; static uint16_t ws_port;
 static char     ws_path[64], ws_host[64], ws_hello[200];
@@ -177,6 +190,9 @@ static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
         int used = (int) (end + 4 - (char *) ws_rx);
         memmove(ws_rx, ws_rx + used, ws_rx_len - used); ws_rx_len -= used;
         ws_state = WS_OPEN; ws_backoff_ms = 2000; ws_ping_sent_ms = 0;
+#if LWIP_ALTCP
+        ws_tls_session_save();
+#endif
         if (ws_hello[0]) ws_client_send_text(ws_hello);
     }
     if (ws_state == WS_OPEN) ws_parse_frames();
@@ -194,6 +210,7 @@ static void ws_connect(void) {
         }
         ws_pcb = ws_tls_conf ? altcp_tls_new(ws_tls_conf, IPADDR_TYPE_V4) : NULL;
         if (ws_pcb) mbedtls_ssl_set_hostname((mbedtls_ssl_context *) altcp_tls_context(ws_pcb), ws_sni);   /* SNI + name check */
+        if (ws_pcb && ws_tls_sess_ok) { if (altcp_tls_set_session(ws_pcb, &ws_tls_sess) == ERR_OK) ws_tls_resumed_tries++; }
     } else {
         ws_pcb = altcp_tcp_new();
     }
@@ -210,6 +227,10 @@ static void ws_connect(void) {
 
 void ws_client_start(const char *ip, uint16_t port, const char *path, const char *host, const char *hello, ws_line_cb on_line) {
     ws_client_stop();
+#if LWIP_ALTCP
+    { ip_addr_t nip; ipaddr_aton(ip, &nip);
+      if (!ip_addr_cmp(&nip, &ws_ip) || port != ws_port || strncmp(host ? host : ip, ws_host, sizeof ws_host) != 0) ws_tls_session_drop(); }
+#endif
     ipaddr_aton(ip, &ws_ip); ws_port = port; ws_on_line = on_line;
     strncpy(ws_path, path ? path : "/", sizeof ws_path - 1);
     strncpy(ws_host, host ? host : ip, sizeof ws_host - 1);
@@ -229,6 +250,27 @@ int ws_client_set_tls(int on, const char *sni) {
     return 1;
 #else
     (void) on; (void) sni; return 0;
+#endif
+}
+int ws_client_tls_session_saved(void) {
+#if LWIP_ALTCP
+    return ws_tls_sess_ok;
+#else
+    return 0;
+#endif
+}
+uint32_t ws_client_tls_resumed_tries(void) {
+#if LWIP_ALTCP
+    return ws_tls_resumed_tries;
+#else
+    return 0;
+#endif
+}
+int ws_client_tls_session_id_len(void) {   /* 0 = no session id (server did not issue one → nothing to resume) */
+#if LWIP_ALTCP
+    return ws_tls_sess_ok ? (int) ws_tls_sess.data.id_len : -1;
+#else
+    return -1;
 #endif
 }
 int ws_client_is_tls(void) {
