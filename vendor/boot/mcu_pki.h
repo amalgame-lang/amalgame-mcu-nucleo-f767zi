@@ -13,6 +13,7 @@ int         mcu_pki_set_cert(const char *pem); /* store+parse the issued certifi
 int         mcu_pki_have_cert(void);           /* 1 if a valid certificate is loaded */
 const char *mcu_pki_cert_pem(void);            /* the stored certificate PEM ("" if none) */
 const char *mcu_pki_cert_subject(void);        /* subject CN of the cert, for `pki` status ("" if none) */
+const char *mcu_pki_cert_expiry(void);         /* notAfter as "YYYY-MM-DD" ("" if none) */
 /* for the TLS client: the parsed cert chain + pk, to pass to mbedtls_ssl_conf_own_cert (NULL if none) */
 void       *mcu_pki_cert_ctx(void);
 void       *mcu_pki_pk_ctx(void);
