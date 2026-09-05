@@ -104,7 +104,11 @@ static void ws_close_pcb(void) {
     }
 }
 
+/* diagnostics: the application may provide ws_client_log (console); weak no-op otherwise */
+__attribute__((weak)) void ws_client_log(const char *s) { (void) s; }
+static const char *ws_why = "";
 static void ws_schedule_retry(void) {
+    { char m[64]; int k = 0; const char *p = "ws: retry "; while (*p) m[k++] = *p++; p = ws_why; while (*p && k < 60) m[k++] = *p++; m[k] = 0; ws_client_log(m); ws_why = ""; }
     ws_close_pcb();
     ws_state = WS_CLOSED;
     ws_rx_len = 0;
@@ -113,6 +117,7 @@ static void ws_schedule_retry(void) {
 }
 
 static void ws_err_cb(void *arg, err_t err) {
+    { char m[32]; int k = 0; const char *p = "ws: err_cb "; while (*p) m[k++] = *p++; m[k++] = (char) ('0' - err); m[k] = 0; ws_client_log(m); }
     (void) arg; (void) err;
     ws_pcb = NULL;                            /* already freed by lwIP */
     ws_state = WS_CLOSED; ws_rx_len = 0;
@@ -175,16 +180,16 @@ static void ws_parse_frames(void) {
         if (ws_rx_len < 2) return;
         int op = ws_rx[0] & 0x0F, hdr = 2; uint32_t n = ws_rx[1] & 0x7F; int masked = ws_rx[1] & 0x80;
         if (n == 126) { if (ws_rx_len < 4) return; n = (ws_rx[2] << 8) | ws_rx[3]; hdr = 4; }
-        else if (n == 127) { ws_schedule_retry(); return; }         /* never from our server */
+        else if (n == 127) { ws_why = "len127"; ws_schedule_retry(); return; }         /* never from our server */
         if (masked) hdr += 4;
-        if (hdr + n > (uint32_t) WS_RX_BUF) { ws_schedule_retry(); return; } /* oversized: resync by reconnect */
+        if (hdr + n > (uint32_t) WS_RX_BUF) { ws_why = "oversize"; ws_schedule_retry(); return; } /* oversized: resync by reconnect */
         if ((uint32_t) ws_rx_len < hdr + n) return;
         unsigned char *pl = &ws_rx[hdr];
         if (masked) { unsigned char *m = &ws_rx[hdr - 4]; for (uint32_t i = 0; i < n; i++) pl[i] ^= m[i & 3]; }
         ws_frames++;
         if (op == 1 && ws_on_line) { unsigned char save = pl[n]; pl[n] = 0; ws_on_line((const char *) pl, (int) n); pl[n] = save; }
         else if (op == 9) ws_send_frame(10, pl, (int) n);            /* ping -> pong */
-        else if (op == 8) { ws_schedule_retry(); return; }
+        else if (op == 8) { ws_why = "close"; ws_schedule_retry(); return; }
         int used = hdr + (int) n;
         memmove(ws_rx, ws_rx + used, ws_rx_len - used); ws_rx_len -= used;
     }
@@ -192,10 +197,10 @@ static void ws_parse_frames(void) {
 
 static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
     (void) arg; (void) err;
-    if (!p) { ws_schedule_retry(); return ERR_OK; }              /* remote close */
+    if (!p) { ws_why = "remote-close"; ws_schedule_retry(); return ERR_OK; }              /* remote close */
     int room = WS_RX_BUF - ws_rx_len;
     if (p->tot_len > room) {                                     /* would truncate a frame → the parser would wait forever: resync by reconnecting */
-        ws_rx_overflows++; ws_pcb_recved(pcb, p->tot_len); pbuf_free(p); ws_schedule_retry(); return ERR_OK;
+        ws_rx_overflows++; ws_pcb_recved(pcb, p->tot_len); pbuf_free(p); ws_why = "overflow"; ws_schedule_retry(); return ERR_OK;
     }
     pbuf_copy_partial(p, ws_rx + ws_rx_len, (u16_t) p->tot_len, 0);
     ws_rx_len += p->tot_len;
@@ -381,13 +386,13 @@ void ws_client_poll(void) {
     }
     if (ws_state == WS_RESOLVING) { if (now - ws_resolve_ms > 10000) { ws_dns_failures++; ws_schedule_retry(); } return; }
     if (ws_state == WS_CONNECTING || ws_state == WS_HANDSHAKE) {
-        if (now - ws_last_rx_ms > 10000 && ws_state == WS_HANDSHAKE) ws_schedule_retry();
+        if (now - ws_last_rx_ms > 10000 && ws_state == WS_HANDSHAKE) { ws_why = "hs-timeout"; ws_schedule_retry(); }
         return;
     }
     if (ws_state == WS_OPEN) {
         /* liveness: ping after 20 s of silence, give up 10 s later */
         if (now - ws_last_rx_ms > 20000 && !ws_ping_sent_ms) { ws_send_frame(9, (const unsigned char *) "mc", 2); ws_ping_sent_ms = now; }
-        if (ws_ping_sent_ms && now - ws_ping_sent_ms > 10000) ws_schedule_retry();
+        if (ws_ping_sent_ms && now - ws_ping_sent_ms > 10000) { ws_why = "ping-timeout"; ws_schedule_retry(); }
         if (ws_ping_sent_ms && ws_last_rx_ms > ws_ping_sent_ms) ws_ping_sent_ms = 0;
     }
 }
