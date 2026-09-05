@@ -17,9 +17,17 @@ with tempfile.TemporaryDirectory() as d:
     p = os.path.join(d, 'h'); open(p, 'wb').write(hdr); q = os.path.join(d, 's')
     cmd = ['openssl', 'pkeyutl', '-sign', '-inkey', key, '-rawin', '-in', p, '-out', q]
     passf = os.environ.get('OTA_PASS_FILE')
+    # Clé chiffrée sans passphrase : on ÉCHOUE tout de suite. Sinon openssl attend une saisie et la
+    # compilation reste pendue sans rien dire (vécu le 2026-09-06, build bloqué plusieurs minutes).
+    encrypted = 'ENCRYPTED PRIVATE KEY' in open(key, encoding='utf-8', errors='replace').read(200)
+    if encrypted and not passf:
+        sys.exit(f"{key} est chiffrée et OTA_PASS_FILE n'est pas défini.\n"
+                 f"  eval \"$({os.path.relpath(os.path.dirname(os.path.abspath(__file__)))}/ota-unlock.sh)\"   (une fois par session)")
     if passf:
         if not os.path.exists(passf): sys.exit(f"OTA_PASS_FILE={passf} introuvable (tools/ota-unlock.sh ?)")
         cmd += ['-passin', 'file:' + passf]
+    elif encrypted is False:
+        cmd += ['-passin', 'pass:']   # clé en clair : ne jamais tomber sur une invite
     try: subprocess.run(cmd, check=True, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
         msg = (e.stderr or b'').decode(errors='replace').strip()

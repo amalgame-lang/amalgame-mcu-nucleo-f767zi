@@ -13,6 +13,7 @@
 #include "lwip/altcp_tls.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls_port.h"
+#include "../boot/mcu_pki.h"   /* identité du boîtier : certificat client présenté en mTLS */
 #include "wallclock.h"
 extern int altcp_mbedtls_last_hs_err; extern unsigned altcp_mbedtls_last_verify, altcp_mbedtls_hs_failures;   /* altcp_tls_mbedtls.c (MusiCall patch) */
 #ifndef WS_TLS_NEEDS_TIME
@@ -244,14 +245,34 @@ static void ws_connect(void) {
 #endif
     ws_connect_ip();
 }
+static int ws_own_cert, ws_own_cert_rc, ws_tls_conf_stale;
+/* L'enrôlement au banc pose le certificat APRÈS la première connexion : la config TLS déjà construite
+ * ne le connaît pas. On la marque périmée — la libération se fait au prochain connect, PAS ici :
+ * altcp_tls_free_config n'a pas de compteur de références, et la connexion en cours la pointe encore. */
+void ws_client_tls_identity_changed(void) { ws_tls_conf_stale = 1; }
+int ws_client_tls_own_cert(void) { return ws_own_cert; }
+int ws_client_tls_own_cert_rc(void) { return ws_own_cert_rc; }
 static void ws_connect_ip(void) {
 #if LWIP_ALTCP
     if (ws_tls) {
+        if (ws_tls_conf && ws_tls_conf_stale) {   /* ici le pcb précédent est fermé : libération sûre */
+            altcp_tls_free_config(ws_tls_conf); ws_tls_conf = NULL; ws_own_cert = 0; ws_own_cert_rc = 0;
+            ws_tls_session_drop();                /* l'identité change : une session reprise serait la mauvaise */
+        }
+        ws_tls_conf_stale = 0;
         if (!ws_tls_conf) {
             ws_tls_conf = altcp_tls_create_config_client((const u8_t *) mcu_tls_roots_pem, mcu_tls_roots_pem_len);
             /* struct altcp_tls_config starts with the mbedtls_ssl_config: cap records at 4 KB (our buffers) */
             if (ws_tls_conf) mbedtls_ssl_conf_max_frag_len((mbedtls_ssl_config *) ws_tls_conf, MBEDTLS_SSL_MAX_FRAG_LEN_4096);
             if (ws_tls_conf) mbedtls_ssl_conf_verify((mbedtls_ssl_config *) ws_tls_conf, ws_verify_cb, NULL);
+            /* mTLS : on présente le certificat du boîtier SI le serveur en demande un (docs/PKI.md §5).
+             * mbedtls_ssl_conf_own_cert AJOUTE à une liste : à n'appeler qu'une fois par config, d'où la
+             * remise à zéro de la config quand l'identité change (ws_client_tls_identity_changed). */
+            if (ws_tls_conf && mcu_pki_cert_ctx() && mcu_pki_pk_ctx()) {
+                ws_own_cert_rc = mbedtls_ssl_conf_own_cert((mbedtls_ssl_config *) ws_tls_conf,
+                                     (mbedtls_x509_crt *) mcu_pki_cert_ctx(), (mbedtls_pk_context *) mcu_pki_pk_ctx());
+                ws_own_cert = ws_own_cert_rc == 0;
+            } else { ws_own_cert = 0; ws_own_cert_rc = 0; }
         }
         ws_pcb = ws_tls_conf ? altcp_tls_new(ws_tls_conf, IPADDR_TYPE_V4) : NULL;
         if (ws_pcb) mbedtls_ssl_set_hostname((mbedtls_ssl_context *) altcp_tls_context(ws_pcb), ws_sni);   /* SNI + name check */

@@ -43,6 +43,9 @@ uint32_t ws_client_tls_degraded(void);       /* handshakes attempted without a c
 int      ws_client_tls_dates_unchecked(void);/* 1 = the current (or last) connection skipped the date check */
 /* last TLS handshake failure seen by the altcp glue: mbedTLS error (e.g. -0x2700 = certificate verify
  * failed) and the X.509 verify flags (0x01 expired, 0x200 not yet valid …); 0/0 = none since boot */
+void ws_client_tls_identity_changed(void);  /* le certificat/la clé du boîtier ont changé : rebâtir la config TLS */
+int ws_client_tls_own_cert(void);           /* 1 = un certificat client est armé dans la config TLS */
+int ws_client_tls_own_cert_rc(void);        /* code de retour de mbedtls_ssl_conf_own_cert (0 = ok) */
 int ws_client_tls_last_error(void);
 unsigned ws_client_tls_last_verify(void);
 unsigned ws_client_tls_failures(void);
