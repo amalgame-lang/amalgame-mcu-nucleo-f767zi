@@ -34,7 +34,7 @@
  * router offers one, else fixed fallbacks (net_mcu.c) — no DNS in lwIP yet. Started once DHCP is bound. */
 #define LWIP_DHCP_GET_NTP_SRV       1
 #define LWIP_DHCP_MAX_NTP_SERVERS   1
-#define SNTP_MAX_SERVERS            3   /* 0 = DHCP / manual (`ntp <ip>`), 1-2 = fallbacks */
+#define SNTP_MAX_SERVERS            4   /* 0 = DHCP / manual (`ntp <ip>`), 1 = hint (the ctrl server, chrony on the VPS), 2-3 = fallbacks */
 #define SNTP_SERVER_DNS             0
 #define SNTP_STARTUP_DELAY          0
 #define SNTP_RECV_TIMEOUT           3000   /* dead server → next one after 3 s (default 15 s) */

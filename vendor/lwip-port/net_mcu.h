@@ -27,6 +27,7 @@ unsigned long long net_micros(void); /* elapsed us since boot: SysTick ms + STK_
 /* Wall clock (SNTP → vendor/time/wallclock.c). Started automatically once DHCP is bound; servers = DHCP option
  * 42 (or `net_time_set_server`), then fixed fallbacks. Diagnostics for the `cfg`/`time` control lines. */
 int         net_time_set_server(const char *ip);   /* manual NTP server (idx 0, DHCP ignored); NULL/"" = back to auto. 1 ok / 0 bad ip */
+void        net_time_set_hint(const char *ip);     /* an NTP server the box already trusts by IP (the ctrl server runs chrony): slot 1, after DHCP/manual */
 void        net_time_stop(void);                   /* bench: stop SNTP (volatile) */
 void        net_time_restart(void);                /* re-arm SNTP now (after stop / server change) */
 int         net_time_mode(void);                   /* 0 = auto (DHCP + fallbacks), 1 = manual, 2 = stopped */

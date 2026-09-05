@@ -63,7 +63,7 @@ static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
 #define MCNET_NTP_FALLBACK_2 "162.159.200.123"
 #endif
 static int mcnet_ntp_mode;            /* 0 auto, 1 manual, 2 stopped */
-static ip_addr_t mcnet_ntp_manual;
+static ip_addr_t mcnet_ntp_manual, mcnet_ntp_hint; static int mcnet_ntp_has_hint;
 static unsigned mcnet_sntp_started;
 void net_time_sntp_set(unsigned int sec) { wallclock_set_src(sec, WALLCLOCK_NTP); }
 static void net_time_start(void)
@@ -71,17 +71,13 @@ static void net_time_start(void)
     ip_addr_t a;
     sntp_stop();
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    if (mcnet_ntp_mode == 1) {
-        sntp_servermode_dhcp(0);
-        sntp_setserver(0, &mcnet_ntp_manual);
-        ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(1, &a);
-        ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(2, &a);
-    } else {
-        sntp_servermode_dhcp(1);
-        int dhcp_has = !ip_addr_isany(sntp_getserver(0));      /* option 42 already applied by dhcp.c */
-        ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(dhcp_has ? 1 : 0, &a);
-        ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(dhcp_has ? 2 : 1, &a);
-    }
+    u8_t i = 0; ip_addr_t none; ip_addr_set_zero(&none);
+    if (mcnet_ntp_mode == 1) { sntp_servermode_dhcp(0); sntp_setserver(i++, &mcnet_ntp_manual); }
+    else { sntp_servermode_dhcp(1); if (!ip_addr_isany(sntp_getserver(0))) i++; }   /* option 42 already applied by dhcp.c */
+    if (mcnet_ntp_has_hint) sntp_setserver(i++, &mcnet_ntp_hint);
+    ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(i++, &a);
+    if (i < SNTP_MAX_SERVERS) { ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(i++, &a); }
+    while (i < SNTP_MAX_SERVERS) sntp_setserver(i++, &none);
     sntp_init();
     mcnet_sntp_started++;
 }
@@ -97,6 +93,13 @@ int net_time_set_server(const char *ip)
     else { if (!ipaddr_aton(ip, &mcnet_ntp_manual)) return 0; mcnet_ntp_mode = 1; }
     if (mcnet_sntp_started) net_time_start();
     return 1;
+}
+void net_time_set_hint(const char *ip)
+{
+    ip_addr_t a; if (!ip || !ipaddr_aton(ip, &a)) return;
+    if (mcnet_ntp_has_hint && ip_addr_cmp(&a, &mcnet_ntp_hint)) return;
+    mcnet_ntp_hint = a; mcnet_ntp_has_hint = 1;
+    if (mcnet_sntp_started && mcnet_ntp_mode != 2) net_time_start();
 }
 void net_time_stop(void) { sntp_stop(); mcnet_ntp_mode = 2; }
 void net_time_restart(void) { if (mcnet_ntp_mode == 2) mcnet_ntp_mode = 0; if (!ip4_addr_isany_val(*netif_ip4_addr(&mcnet_netif))) net_time_start(); }
