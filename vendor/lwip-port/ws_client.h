@@ -19,6 +19,7 @@ int  ws_client_is_open(void);                /* 1 = handshake done, frames flowi
 int  ws_client_send_text(const char *s);     /* 1 = queued; 0 = not open / no buffer */
 uint32_t ws_client_reconnects(void);         /* diagnostics */
 uint32_t ws_client_rx_frames(void);
+uint32_t ws_client_rx_overflows(void);      /* received pbufs that did not fit the RX buffer (each one = a reconnect) */
 uint32_t ws_client_dns_failures(void);       /* name resolutions that failed (target by name) */
 const char *ws_client_target(void);          /* the configured target (name or ip) */
 /* wss:// (build with MC_TLS=1): TLS with SNI/name check `sni` against the embedded roots. Returns 0 if

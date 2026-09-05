@@ -51,7 +51,7 @@ static int ws_tls; static char ws_sni[64]; static struct altcp_tls_config *ws_tl
 #define ws_pcb_connect tcp_connect
 #endif
 
-#define WS_RX_BUF   1024      /* one server line (status/commands are < 300 B) */
+#define WS_RX_BUF   4096      /* server lines up to ~1 KB (OTA data), with room for a burst; a frame that cannot fit → reconnect */
 #define WS_TX_MAX   700
 #define WS_HS_MAX   400
 
@@ -86,7 +86,7 @@ static ws_line_cb ws_on_line;
 static unsigned char ws_rx[WS_RX_BUF]; static int ws_rx_len;
 static uint32_t ws_next_try_ms, ws_backoff_ms = 2000;
 static uint32_t ws_last_rx_ms, ws_ping_sent_ms;
-static uint32_t ws_reconnects, ws_frames;
+static uint32_t ws_reconnects, ws_frames, ws_rx_overflows;   /* overflows: pbufs that did not fit in ws_rx (connection reset, never truncated) */
 static uint32_t ws_rand_state;
 uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;   /* profiling of the last frame send (sndbuf / write / output) */
 
@@ -194,9 +194,11 @@ static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
     (void) arg; (void) err;
     if (!p) { ws_schedule_retry(); return ERR_OK; }              /* remote close */
     int room = WS_RX_BUF - ws_rx_len;
-    int take = p->tot_len < room ? p->tot_len : room;
-    pbuf_copy_partial(p, ws_rx + ws_rx_len, (u16_t) take, 0);
-    ws_rx_len += take;
+    if (p->tot_len > room) {                                     /* would truncate a frame → the parser would wait forever: resync by reconnecting */
+        ws_rx_overflows++; ws_pcb_recved(pcb, p->tot_len); pbuf_free(p); ws_schedule_retry(); return ERR_OK;
+    }
+    pbuf_copy_partial(p, ws_rx + ws_rx_len, (u16_t) p->tot_len, 0);
+    ws_rx_len += p->tot_len;
     ws_pcb_recved(pcb, p->tot_len);
     pbuf_free(p);
     ws_last_rx_ms = net_millis();
@@ -393,5 +395,6 @@ void ws_client_poll(void) {
 int ws_client_is_open(void) { return ws_state == WS_OPEN; }
 uint32_t ws_client_reconnects(void) { return ws_reconnects; }
 uint32_t ws_client_rx_frames(void) { return ws_frames; }
+uint32_t ws_client_rx_overflows(void) { return ws_rx_overflows; }
 uint32_t ws_client_dns_failures(void) { return ws_dns_failures; }
 const char *ws_client_target(void) { return ws_target; }
