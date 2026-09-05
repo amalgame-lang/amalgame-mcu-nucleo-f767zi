@@ -86,7 +86,13 @@ static void Fpu_Enable(void) {
     __asm volatile ("isb");
 }
 
+#define SCB_VTOR (*(volatile uint32_t *) 0xE000ED08u)
+#ifdef MC_SLOT
+/* OTA slot image: 512-byte header placeholder at the slot base (tools/ota-sign.py overwrites it in the .bin). */
+__attribute__((section(".fwhdr"), used)) const uint8_t fw_header_space[512] = { 0 };
+#endif
 void Reset_Handler(void) {
+    SCB_VTOR = (uint32_t) (uintptr_t) vector_table;   /* this image's table (a slot image is not at 0x08000000) */
     Fpu_Enable();
     ICache_Enable();
     uint32_t *src = &_sidata, *dst = &_sdata;
