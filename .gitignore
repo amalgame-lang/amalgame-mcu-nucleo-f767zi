@@ -4,3 +4,5 @@ firmware.c
 *.bin
 *.hex
 *.o
+*.a
+build/
