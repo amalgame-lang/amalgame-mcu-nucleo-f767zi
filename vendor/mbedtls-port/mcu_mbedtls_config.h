@@ -63,6 +63,8 @@
 #define MBEDTLS_PKCS1_V15
 #define MBEDTLS_PK_C
 #define MBEDTLS_PK_PARSE_C
+#define MBEDTLS_PK_WRITE_C          /* export de la clé publique/privée PEM (identité du boîtier, mcu_pki.c) */
+#define MBEDTLS_PEM_WRITE_C
 #define MBEDTLS_ASN1_PARSE_C
 #define MBEDTLS_ASN1_WRITE_C
 #define MBEDTLS_OID_C

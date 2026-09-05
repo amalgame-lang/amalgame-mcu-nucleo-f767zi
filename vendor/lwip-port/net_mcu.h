@@ -18,6 +18,7 @@ int         net_rx_fifo_ovf(void); /* MAC: frames dropped, RX FIFO overflow (ETH
 int         net_rx_crc_errors(void);   /* MAC MMC: received frames with CRC error */
 int         net_rx_align_errors(void); /* MAC MMC: received frames with alignment error */
 unsigned int net_uid32(void);      /* 32-bit hash of the STM32 96-bit UID (box identity / RTP SSRC) */
+const char  *net_uid96_hex(void);  /* the full 96-bit STM32 UID as 24 lowercase hex chars (PKI identity CN=uid:<hex>) */
 const char *net_mac_str(void);  /* derived MAC, "aa:bb:cc:dd:ee:ff" */
 unsigned int net_millis(void);  /* elapsed ms since boot (1kHz SysTick) */
 unsigned long long net_micros(void); /* elapsed us since boot: SysTick ms + STK_CVR sub-ms

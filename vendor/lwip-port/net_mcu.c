@@ -160,6 +160,14 @@ int net_rx_align_errors(void) { return (int) *(volatile uint32_t *) (0x40028000u
 
 /* Same UID words the MAC is derived from (ethernetif.c), folded to 32 bits. Never
  * 0 (0 = 'free slot' in the jitter's SSRC table). */
+const char *net_uid96_hex(void)
+{
+    static char h[25]; const volatile uint32_t *uid = (const volatile uint32_t *) 0x1FF0F420u;
+    static const char hx[] = "0123456789abcdef";
+    int p = 0;
+    for (int w = 0; w < 3; w++) { uint32_t v = uid[w]; for (int i = 7; i >= 0; i--) h[p++] = hx[(v >> (i * 4)) & 0xF]; }
+    h[p] = 0; return h;
+}
 unsigned int net_uid32(void)
 {
     const volatile uint32_t *uid = (const volatile uint32_t *) 0x1FF0F420u;
