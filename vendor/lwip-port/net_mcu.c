@@ -9,11 +9,13 @@
 #include "ethernetif.h"
 #include "net_mcu.h"
 #include "lwip/apps/sntp.h"
+#include "lwip/dns.h"
 #include "wallclock.h"
 
 #include <libopencm3/cm3/common.h>
 #include <libopencm3/ethernet/phy.h>
 #include <stdint.h>
+#include <string.h>
 
 static struct netif mcnet_netif;
 
@@ -60,10 +62,32 @@ static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
 #define MCNET_NTP_FALLBACK_1 "162.159.200.1"     /* time.cloudflare.com (anycast, stable) — no DNS in lwIP yet */
 #endif
 #ifndef MCNET_NTP_FALLBACK_2
-#define MCNET_NTP_FALLBACK_2 "162.159.200.123"
+#define MCNET_NTP_FALLBACK_2 "pool.ntp.org"      /* by name: needs DNS, last resort */
 #endif
-static int mcnet_ntp_mode;            /* 0 auto, 1 manual, 2 stopped */
-static ip_addr_t mcnet_ntp_manual, mcnet_ntp_hint; static int mcnet_ntp_has_hint;
+#ifndef MCNET_DNS_FALLBACK_1
+#define MCNET_DNS_FALLBACK_1 "1.1.1.1"
+#endif
+#ifndef MCNET_DNS_FALLBACK_2
+#define MCNET_DNS_FALLBACK_2 "8.8.8.8"
+#endif
+static char mcnet_ntp_manual_name[64], mcnet_ntp_hint_name[64];   /* sntp_setservername keeps the pointer: static storage */
+static unsigned mcnet_dns_fallbacks;
+static void net_dns_fallback(void)
+{   /* DHCP option 6 lands in dns_setserver(0/1) before the address is bound; fill what is missing */
+    ip_addr_t a;
+    if (ip_addr_isany(dns_getserver(0))) { ipaddr_aton(MCNET_DNS_FALLBACK_1, &a); dns_setserver(0, &a); ipaddr_aton(MCNET_DNS_FALLBACK_2, &a); dns_setserver(1, &a); mcnet_dns_fallbacks = 2; }
+    else if (ip_addr_isany(dns_getserver(1))) { ipaddr_aton(MCNET_DNS_FALLBACK_1, &a); dns_setserver(1, &a); mcnet_dns_fallbacks = 1; }
+}
+const char *net_dns_server_str(u8_t i) { return ipaddr_ntoa(dns_getserver(i)); }
+unsigned net_dns_fallbacks(void) { return mcnet_dns_fallbacks; }
+/* one SNTP slot = an address or a name (static storage) */
+static void net_sntp_slot(u8_t i, const char *s, char *store)
+{
+    ip_addr_t a; ip_addr_t none; ip_addr_set_zero(&none);
+    if (ipaddr_aton(s, &a)) { sntp_setservername(i, NULL); sntp_setserver(i, &a); }
+    else { if (store) { strncpy(store, s, 63); store[63] = 0; s = store; } sntp_setserver(i, &none); sntp_setservername(i, s); }
+}static int mcnet_ntp_mode;            /* 0 auto, 1 manual, 2 stopped */
+static int mcnet_ntp_has_hint;
 static unsigned mcnet_sntp_started;
 void net_time_sntp_set(unsigned int sec) { wallclock_set_src(sec, WALLCLOCK_NTP); }
 static void net_time_start(void)
@@ -71,13 +95,13 @@ static void net_time_start(void)
     ip_addr_t a;
     sntp_stop();
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    u8_t i = 0; ip_addr_t none; ip_addr_set_zero(&none);
-    if (mcnet_ntp_mode == 1) { sntp_servermode_dhcp(0); sntp_setserver(i++, &mcnet_ntp_manual); }
+    u8_t i = 0; ip_addr_t none; ip_addr_set_zero(&none); (void) a;
+    if (mcnet_ntp_mode == 1) { sntp_servermode_dhcp(0); net_sntp_slot(i++, mcnet_ntp_manual_name, NULL); }
     else { sntp_servermode_dhcp(1); if (!ip_addr_isany(sntp_getserver(0))) i++; }   /* option 42 already applied by dhcp.c */
-    if (mcnet_ntp_has_hint) sntp_setserver(i++, &mcnet_ntp_hint);
-    ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(i++, &a);
-    if (i < SNTP_MAX_SERVERS) { ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(i++, &a); }
-    while (i < SNTP_MAX_SERVERS) sntp_setserver(i++, &none);
+    if (mcnet_ntp_has_hint) net_sntp_slot(i++, mcnet_ntp_hint_name, NULL);
+    net_sntp_slot(i++, MCNET_NTP_FALLBACK_1, NULL);
+    if (i < SNTP_MAX_SERVERS) net_sntp_slot(i++, MCNET_NTP_FALLBACK_2, NULL);
+    while (i < SNTP_MAX_SERVERS) { sntp_setservername(i, NULL); sntp_setserver(i++, &none); }
     sntp_init();
     mcnet_sntp_started++;
 }
@@ -85,20 +109,21 @@ static void net_time_poll(void)
 {
     if (mcnet_sntp_started || mcnet_ntp_mode == 2) return;
     if (ip4_addr_isany_val(*netif_ip4_addr(&mcnet_netif))) return;   /* wait for DHCP */
+    net_dns_fallback();
     net_time_start();
 }
 int net_time_set_server(const char *ip)
 {
     if (!ip || !ip[0]) { mcnet_ntp_mode = 0; }
-    else { if (!ipaddr_aton(ip, &mcnet_ntp_manual)) return 0; mcnet_ntp_mode = 1; }
+    else { size_t n = strlen(ip); if (n < 1 || n > 63) return 0; strncpy(mcnet_ntp_manual_name, ip, 63); mcnet_ntp_manual_name[63] = 0; mcnet_ntp_mode = 1; }
     if (mcnet_sntp_started) net_time_start();
     return 1;
 }
 void net_time_set_hint(const char *ip)
 {
-    ip_addr_t a; if (!ip || !ipaddr_aton(ip, &a)) return;
-    if (mcnet_ntp_has_hint && ip_addr_cmp(&a, &mcnet_ntp_hint)) return;
-    mcnet_ntp_hint = a; mcnet_ntp_has_hint = 1;
+    if (!ip || !ip[0] || strlen(ip) > 63) return;
+    if (mcnet_ntp_has_hint && strcmp(ip, mcnet_ntp_hint_name) == 0) return;
+    strncpy(mcnet_ntp_hint_name, ip, 63); mcnet_ntp_hint_name[63] = 0; mcnet_ntp_has_hint = 1;
     if (mcnet_sntp_started && mcnet_ntp_mode != 2) net_time_start();
 }
 void net_time_stop(void) { sntp_stop(); mcnet_ntp_mode = 2; }
@@ -110,7 +135,7 @@ static u8_t net_time_cur_idx(void)
     for (u8_t i = 0; i < SNTP_MAX_SERVERS; i++) if (sntp_getreachability(i)) return i;
     return 0;
 }
-const char *net_time_server_str(void) { return ipaddr_ntoa(sntp_getserver(net_time_cur_idx())); }
+const char *net_time_server_str(void) { u8_t i = net_time_cur_idx(); return sntp_getservername(i) ? sntp_getservername(i) : ipaddr_ntoa(sntp_getserver(i)); }
 unsigned net_time_reach(void) { return sntp_getreachability(net_time_cur_idx()); }
 unsigned net_time_sntp_started(void) { return mcnet_sntp_started; }
 #include <libopencm3/ethernet/mac_stm32fxx7.h>

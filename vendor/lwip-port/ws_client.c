@@ -3,7 +3,9 @@
 #include "net_mcu.h"
 #include "lwip/tcp.h"
 #include "lwip/ip_addr.h"
+#include "lwip/dns.h"
 #include <string.h>
+#include <stdint.h>
 #if LWIP_ALTCP
 /* altcp: same code path for ws:// (altcp_tcp) and wss:// (altcp_tls over mbedTLS, vendor/mbedtls-port) */
 #include "lwip/altcp.h"
@@ -53,7 +55,7 @@ static int ws_tls; static char ws_sni[64]; static struct altcp_tls_config *ws_tl
 #define WS_TX_MAX   700
 #define WS_HS_MAX   400
 
-enum { WS_IDLE, WS_CONNECTING, WS_HANDSHAKE, WS_OPEN, WS_CLOSED };
+enum { WS_IDLE, WS_CONNECTING, WS_HANDSHAKE, WS_OPEN, WS_CLOSED, WS_RESOLVING };
 
 static WS_PCB *ws_pcb;
 #if LWIP_ALTCP
@@ -78,7 +80,7 @@ static void ws_tls_session_save(void) {
 }
 #endif
 static int      ws_state = WS_IDLE;
-static ip_addr_t ws_ip; static uint16_t ws_port;
+static ip_addr_t ws_ip; static uint16_t ws_port; static char ws_target[64]; static int ws_by_name; static uint32_t ws_dns_failures, ws_dns_gen, ws_resolve_ms;
 static char     ws_path[64], ws_host[64], ws_hello[200];
 static ws_line_cb ws_on_line;
 static unsigned char ws_rx[WS_RX_BUF]; static int ws_rx_len;
@@ -215,8 +217,27 @@ static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
     return ERR_OK;
 }
 
+static void ws_connect_ip(void);
+static void ws_dns_cb(const char *name, const ip_addr_t *addr, void *arg) {
+    (void) name;
+    if ((uint32_t) (uintptr_t) arg != ws_dns_gen || ws_state != WS_RESOLVING) return;   /* stale (stop/restart since) */
+    if (addr && !ip_addr_isany(addr)) { ws_ip = *addr; ws_connect_ip(); }
+    else { ws_dns_failures++; ws_schedule_retry(); }
+}
 static void ws_connect(void) {
     ws_close_pcb();
+#if LWIP_DNS
+    if (ws_by_name) {
+        ip_addr_t a; ws_dns_gen++;
+        err_t e = dns_gethostbyname(ws_target, &a, ws_dns_cb, (void *) (uintptr_t) ws_dns_gen);
+        if (e == ERR_OK) { ws_ip = a; }
+        else if (e == ERR_INPROGRESS) { ws_state = WS_RESOLVING; ws_resolve_ms = net_millis(); return; }
+        else { ws_dns_failures++; ws_schedule_retry(); return; }
+    }
+#endif
+    ws_connect_ip();
+}
+static void ws_connect_ip(void) {
 #if LWIP_ALTCP
     if (ws_tls) {
         if (!ws_tls_conf) {
@@ -247,10 +268,11 @@ static void ws_connect(void) {
 void ws_client_start(const char *ip, uint16_t port, const char *path, const char *host, const char *hello, ws_line_cb on_line) {
     ws_client_stop();
 #if LWIP_ALTCP
-    { ip_addr_t nip; ipaddr_aton(ip, &nip);
-      if (!ip_addr_cmp(&nip, &ws_ip) || port != ws_port || strncmp(host ? host : ip, ws_host, sizeof ws_host) != 0) ws_tls_session_drop(); }
+    if (strncmp(ip, ws_target, sizeof ws_target) != 0 || port != ws_port || strncmp(host ? host : ip, ws_host, sizeof ws_host) != 0) ws_tls_session_drop();
 #endif
-    ipaddr_aton(ip, &ws_ip); ws_port = port; ws_on_line = on_line;
+    strncpy(ws_target, ip, sizeof ws_target - 1); ws_target[sizeof ws_target - 1] = 0;
+    ws_by_name = !ipaddr_aton(ip, &ws_ip);          /* not an IPv4 literal → resolve before each connect (LWIP_DNS) */
+    ws_port = port; ws_on_line = on_line;
     strncpy(ws_path, path ? path : "/", sizeof ws_path - 1);
     strncpy(ws_host, host ? host : ip, sizeof ws_host - 1);
     if (hello) strncpy(ws_hello, hello, sizeof ws_hello - 1); else ws_hello[0] = 0;
@@ -355,6 +377,7 @@ void ws_client_poll(void) {
 #endif
         ws_connect(); return;
     }
+    if (ws_state == WS_RESOLVING) { if (now - ws_resolve_ms > 10000) { ws_dns_failures++; ws_schedule_retry(); } return; }
     if (ws_state == WS_CONNECTING || ws_state == WS_HANDSHAKE) {
         if (now - ws_last_rx_ms > 10000 && ws_state == WS_HANDSHAKE) ws_schedule_retry();
         return;
@@ -370,3 +393,5 @@ void ws_client_poll(void) {
 int ws_client_is_open(void) { return ws_state == WS_OPEN; }
 uint32_t ws_client_reconnects(void) { return ws_reconnects; }
 uint32_t ws_client_rx_frames(void) { return ws_frames; }
+uint32_t ws_client_dns_failures(void) { return ws_dns_failures; }
+const char *ws_client_target(void) { return ws_target; }

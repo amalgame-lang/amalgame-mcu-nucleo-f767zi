@@ -35,7 +35,7 @@
 #define LWIP_DHCP_GET_NTP_SRV       1
 #define LWIP_DHCP_MAX_NTP_SERVERS   1
 #define SNTP_MAX_SERVERS            4   /* 0 = DHCP / manual (`ntp <ip>`), 1 = hint (the ctrl server, chrony on the VPS), 2-3 = fallbacks */
-#define SNTP_SERVER_DNS             0
+#define SNTP_SERVER_DNS             1   /* `ntp <name>`, last fallback pool.ntp.org */
 #define SNTP_STARTUP_DELAY          0
 #define SNTP_RECV_TIMEOUT           3000   /* dead server → next one after 3 s (default 15 s) */
 #define SNTP_RETRY_TIMEOUT          3000
@@ -46,7 +46,11 @@
 void net_time_sntp_set(unsigned int sec);
 #define LWIP_AUTOIP                 0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
-#define LWIP_DNS                    0
+/* DNS (2026-09-05): `ctrl <name> 443`, `ntp <name>`. Servers from DHCP (option 6), else 1.1.1.1 / 8.8.8.8 (net_mcu.c). */
+#define LWIP_DNS                    1
+#define DNS_TABLE_SIZE              4
+#define DNS_MAX_NAME_LENGTH         64
+#define DNS_MAX_SERVERS             2
 #define LWIP_IGMP                   0
 
 /* Memory: lwIP heap + pools (no libc malloc on bare metal). */
@@ -59,8 +63,8 @@ void net_time_sntp_set(unsigned int sec);
 #define MEM_SIZE                    (12 * 1024)
 #endif
 #define MEMP_NUM_PBUF               24
-#define MEMP_NUM_UDP_PCB            6
-#define MEMP_NUM_SYS_TIMEOUT        10  /* tcp, arp, ip reass, 2×dhcp + sntp (2 timers) + margin */
+#define MEMP_NUM_UDP_PCB            8   /* 2 RTP + ctrl + dhcp + sntp + dns + margin */
+#define MEMP_NUM_SYS_TIMEOUT        12  /* tcp, arp, ip reass, 2×dhcp, dns + sntp (2 timers) + margin */
 /* TCP sized for ONE small control connection (WebSocket to the server): tiny
  * window and send buffer, no out-of-order queue — a few KB of RAM in total. */
 #define MEMP_NUM_TCP_PCB            2

@@ -8,7 +8,8 @@
 
 typedef void (*ws_line_cb)(const char *line, int len);   /* one text frame received */
 
-/* Start (or restart) the client towards ip:port path. host = Host: header value.
+/* Start (or restart) the client towards target:port path — target = IPv4 literal or a DNS name (LWIP_DNS,
+ * resolved before each connect; lwIP caches by TTL). host = Host: header value (defaults to target).
  * hello = text sent right after each successful handshake (may be NULL). */
 void ws_client_start(const char *ip, uint16_t port, const char *path, const char *host,
                      const char *hello, ws_line_cb on_line);
@@ -18,6 +19,8 @@ int  ws_client_is_open(void);                /* 1 = handshake done, frames flowi
 int  ws_client_send_text(const char *s);     /* 1 = queued; 0 = not open / no buffer */
 uint32_t ws_client_reconnects(void);         /* diagnostics */
 uint32_t ws_client_rx_frames(void);
+uint32_t ws_client_dns_failures(void);       /* name resolutions that failed (target by name) */
+const char *ws_client_target(void);          /* the configured target (name or ip) */
 /* wss:// (build with MC_TLS=1): TLS with SNI/name check `sni` against the embedded roots. Returns 0 if
  * the firmware was built without TLS. Call before ws_client_start(). */
 int ws_client_set_tls(int on, const char *sni);
