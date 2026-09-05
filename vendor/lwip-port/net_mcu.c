@@ -8,6 +8,8 @@
 #include "lwip/ip_addr.h"
 #include "ethernetif.h"
 #include "net_mcu.h"
+#include "lwip/apps/sntp.h"
+#include "wallclock.h"
 
 #include <libopencm3/cm3/common.h>
 #include <libopencm3/ethernet/phy.h>
@@ -31,9 +33,12 @@ uint32_t lwip_rand(void)
     return s;
 }
 
+static uint32_t mcnet_ms_now(void) { return lwip_ms; }
+
 void net_init(void)
 {
     lwip_init();
+    wallclock_bind(mcnet_ms_now);
 
     ip4_addr_t any;
     ip4_addr_set_zero(&any);
@@ -47,6 +52,64 @@ void net_init(void)
  * dropped because no RX descriptor was free (MFC, host too slow / burst > ring),
  * and frames lost to RX FIFO overflow (MFA). Invisible to lwIP otherwise. */
 static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
+
+/* ── wall clock via SNTP (lwIP apps/sntp, poll mode). Started when DHCP has bound: by then dhcp.c has
+ * already handed option 42 to sntp (dhcp_set_ntp_servers) if the router offers one; otherwise the fixed
+ * fallbacks take slot 0. A manual server (`ntp <ip>`) owns slot 0 and DHCP is told to keep off. ── */
+#ifndef MCNET_NTP_FALLBACK_1
+#define MCNET_NTP_FALLBACK_1 "162.159.200.1"     /* time.cloudflare.com (anycast, stable) — no DNS in lwIP yet */
+#endif
+#ifndef MCNET_NTP_FALLBACK_2
+#define MCNET_NTP_FALLBACK_2 "162.159.200.123"
+#endif
+static int mcnet_ntp_mode;            /* 0 auto, 1 manual, 2 stopped */
+static ip_addr_t mcnet_ntp_manual;
+static unsigned mcnet_sntp_started;
+void net_time_sntp_set(unsigned int sec) { wallclock_set(sec); }
+static void net_time_start(void)
+{
+    ip_addr_t a;
+    sntp_stop();
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    if (mcnet_ntp_mode == 1) {
+        sntp_servermode_dhcp(0);
+        sntp_setserver(0, &mcnet_ntp_manual);
+        ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(1, &a);
+        ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(2, &a);
+    } else {
+        sntp_servermode_dhcp(1);
+        int dhcp_has = !ip_addr_isany(sntp_getserver(0));      /* option 42 already applied by dhcp.c */
+        ipaddr_aton(MCNET_NTP_FALLBACK_1, &a); sntp_setserver(dhcp_has ? 1 : 0, &a);
+        ipaddr_aton(MCNET_NTP_FALLBACK_2, &a); sntp_setserver(dhcp_has ? 2 : 1, &a);
+    }
+    sntp_init();
+    mcnet_sntp_started++;
+}
+static void net_time_poll(void)
+{
+    if (mcnet_sntp_started || mcnet_ntp_mode == 2) return;
+    if (ip4_addr_isany_val(*netif_ip4_addr(&mcnet_netif))) return;   /* wait for DHCP */
+    net_time_start();
+}
+int net_time_set_server(const char *ip)
+{
+    if (!ip || !ip[0]) { mcnet_ntp_mode = 0; }
+    else { if (!ipaddr_aton(ip, &mcnet_ntp_manual)) return 0; mcnet_ntp_mode = 1; }
+    if (mcnet_sntp_started) net_time_start();
+    return 1;
+}
+void net_time_stop(void) { sntp_stop(); mcnet_ntp_mode = 2; }
+void net_time_restart(void) { if (mcnet_ntp_mode == 2) mcnet_ntp_mode = 0; if (!ip4_addr_isany_val(*netif_ip4_addr(&mcnet_netif))) net_time_start(); }
+int net_time_mode(void) { return mcnet_ntp_mode; }
+static u8_t net_time_cur_idx(void)
+{   /* the slot lwIP is polling = the one whose reachability register moved last; good enough for diagnostics */
+    for (u8_t i = 0; i < SNTP_MAX_SERVERS; i++) if (sntp_getreachability(i) & 1) return i;
+    for (u8_t i = 0; i < SNTP_MAX_SERVERS; i++) if (sntp_getreachability(i)) return i;
+    return 0;
+}
+const char *net_time_server_str(void) { return ipaddr_ntoa(sntp_getserver(net_time_cur_idx())); }
+unsigned net_time_reach(void) { return sntp_getreachability(net_time_cur_idx()); }
+unsigned net_time_sntp_started(void) { return mcnet_sntp_started; }
 #include <libopencm3/ethernet/mac_stm32fxx7.h>
 #ifndef ETH_DMAMFBOCR_MFA_SHIFT
 #define ETH_DMAMFBOCR_MFA_SHIFT 17   /* RM0410: MFA = bits 27:17 (missing from libopencm3's header) */
@@ -56,6 +119,7 @@ void net_poll(void)
     ethernetif_poll(&mcnet_netif);
     ethernetif_link_poll(&mcnet_netif);
     sys_check_timeouts();
+    net_time_poll();
     uint32_t m = ETH_DMAMFBOCR;
     mcnet_rx_missed   += m & ETH_DMAMFBOCR_MFC;
     mcnet_rx_fifo_ovf += (m & ETH_DMAMFBOCR_MFA) >> ETH_DMAMFBOCR_MFA_SHIFT;

@@ -1,8 +1,8 @@
 /* mbedTLS 3.6 configuration for the MusiCall box (STM32F767, freestanding, lwIP altcp_tls).
  * TLS 1.2 CLIENT only: ECDHE-ECDSA / ECDHE-RSA + AES-GCM + SHA-256/384, X.509 chain verification
  * against ISRG Root X1 (RSA-4096, cross-signs the Let's Encrypt E intermediates) and X2 (P-384).
- * No filesystem, no clock (certificate validity dates are NOT checked until NTP lands — see
- * docs), no std printf/exit, entropy = STM32 RNG peripheral, memory = static pool (mbedtls_port.c).
+ * No filesystem; clock = SNTP-fed wall clock (vendor/time/wallclock.c) so certificate validity dates ARE
+ * checked (2026-09-05: HAVE_TIME_DATE, gmtime/time/ms_time supplied by mbedtls_port.c); no std printf/exit, entropy = STM32 RNG peripheral, memory = static pool (mbedtls_port.c).
  * Records capped at 4 KB via the max_fragment_length extension (OpenSSL servers honour it). */
 #ifndef MBEDTLS_PORT_CONFIG_H
 #define MBEDTLS_PORT_CONFIG_H
@@ -20,6 +20,13 @@
 #define MBEDTLS_PLATFORM_FPRINTF_MACRO   mcu_tls_fprintf
 #define MBEDTLS_PLATFORM_EXIT_MACRO      mcu_tls_exit
 #define MBEDTLS_PLATFORM_SETBUF_MACRO    mcu_tls_setbuf
+/* time: certificate notBefore/notAfter checked against the wall clock (wallclock_now(); 0 = unknown → every
+ * certificate is 'in the future' → verification fails → no connection until SNTP has synced, by design) */
+#define MBEDTLS_HAVE_TIME
+#define MBEDTLS_HAVE_TIME_DATE
+#define MBEDTLS_PLATFORM_TIME_MACRO      mcu_tls_time
+#define MBEDTLS_PLATFORM_MS_TIME_ALT     /* mbedtls_ms_time() in mbedtls_port.c */
+#define MBEDTLS_PLATFORM_GMTIME_R_ALT    /* mbedtls_platform_gmtime_r() in mbedtls_port.c (no libc gmtime) */
 #define MBEDTLS_ENTROPY_HARDWARE_ALT
 #define MBEDTLS_NO_PLATFORM_ENTROPY
 #define MBEDTLS_ENTROPY_MAX_SOURCES 2

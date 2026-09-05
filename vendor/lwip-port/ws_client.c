@@ -11,6 +11,11 @@
 #include "lwip/altcp_tls.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls_port.h"
+#include "wallclock.h"
+extern int altcp_mbedtls_last_hs_err; extern unsigned altcp_mbedtls_last_verify, altcp_mbedtls_hs_failures;   /* altcp_tls_mbedtls.c (MusiCall patch) */
+#ifndef WS_TLS_NEEDS_TIME
+#define WS_TLS_NEEDS_TIME 1
+#endif
 #define WS_PCB      struct altcp_pcb
 #define ws_pcb_arg  altcp_arg
 #define ws_pcb_recv altcp_recv
@@ -52,7 +57,7 @@ static WS_PCB *ws_pcb;
 /* TLS session resumption: the first handshake costs ~2.4 s of blocking crypto (RSA-4096 + ECDHE on the M7);
  * a resumed one (session ID, OpenSSL server cache) skips it. Saved once the WebSocket is open, reused on
  * every reconnect to the same server, dropped when ip/port/sni change. */
-static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries;
+static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries; static uint32_t ws_time_waits;
 static void ws_tls_session_drop(void) { if (ws_tls_sess_ok) { altcp_tls_free_session(&ws_tls_sess); ws_tls_sess_ok = 0; } }
 static void ws_tls_session_save(void) {
     if (!ws_tls || !ws_pcb) return;
@@ -273,6 +278,39 @@ int ws_client_tls_session_id_len(void) {   /* 0 = no session id (server did not 
     return -1;
 #endif
 }
+void ws_client_forget_session(void) {
+#if LWIP_ALTCP
+    ws_tls_session_drop();
+#endif
+}
+uint32_t ws_client_time_waits(void) {
+#if LWIP_ALTCP
+    return ws_time_waits;
+#else
+    return 0;
+#endif
+}
+int ws_client_tls_last_error(void) {
+#if LWIP_ALTCP
+    return altcp_mbedtls_last_hs_err;
+#else
+    return 0;
+#endif
+}
+unsigned ws_client_tls_last_verify(void) {
+#if LWIP_ALTCP
+    return altcp_mbedtls_last_verify;
+#else
+    return 0;
+#endif
+}
+unsigned ws_client_tls_failures(void) {
+#if LWIP_ALTCP
+    return altcp_mbedtls_hs_failures;
+#else
+    return 0;
+#endif
+}
 int ws_client_is_tls(void) {
 #if LWIP_ALTCP
     return ws_tls;
@@ -283,7 +321,12 @@ int ws_client_is_tls(void) {
 
 void ws_client_poll(void) {
     uint32_t now = net_millis();
-    if (ws_state == WS_CLOSED && (int32_t) (now - ws_next_try_ms) >= 0) { ws_connect(); return; }
+    if (ws_state == WS_CLOSED && (int32_t) (now - ws_next_try_ms) >= 0) {
+#if LWIP_ALTCP
+        if (ws_tls && WS_TLS_NEEDS_TIME && !wallclock_synced()) { ws_time_waits++; ws_next_try_ms = now + 500; return; }   /* no clock → dates unverifiable → wait */
+#endif
+        ws_connect(); return;
+    }
     if (ws_state == WS_CONNECTING || ws_state == WS_HANDSHAKE) {
         if (now - ws_last_rx_ms > 10000 && ws_state == WS_HANDSHAKE) ws_schedule_retry();
         return;

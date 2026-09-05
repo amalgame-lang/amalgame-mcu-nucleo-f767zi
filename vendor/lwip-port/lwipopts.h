@@ -30,6 +30,20 @@
 #define LWIP_ARP                    1
 #define LWIP_ICMP                   1
 #define LWIP_DHCP                   1
+/* SNTP (2026-09-05): the wall clock TLS needs to check certificate dates. Servers: DHCP option 42 if the
+ * router offers one, else fixed fallbacks (net_mcu.c) — no DNS in lwIP yet. Started once DHCP is bound. */
+#define LWIP_DHCP_GET_NTP_SRV       1
+#define LWIP_DHCP_MAX_NTP_SERVERS   1
+#define SNTP_MAX_SERVERS            3   /* 0 = DHCP / manual (`ntp <ip>`), 1-2 = fallbacks */
+#define SNTP_SERVER_DNS             0
+#define SNTP_STARTUP_DELAY          0
+#define SNTP_RECV_TIMEOUT           3000   /* dead server → next one after 3 s (default 15 s) */
+#define SNTP_RETRY_TIMEOUT          3000
+#define SNTP_RETRY_TIMEOUT_MAX      60000
+#define SNTP_UPDATE_DELAY           3600000
+#define SNTP_CHECK_RESPONSE         1      /* reply must come from the server we asked */
+#define SNTP_SET_SYSTEM_TIME(sec)   net_time_sntp_set(sec)
+void net_time_sntp_set(unsigned int sec);
 #define LWIP_AUTOIP                 0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
 #define LWIP_DNS                    0
@@ -46,7 +60,7 @@
 #endif
 #define MEMP_NUM_PBUF               24
 #define MEMP_NUM_UDP_PCB            6
-#define MEMP_NUM_SYS_TIMEOUT        8
+#define MEMP_NUM_SYS_TIMEOUT        10  /* tcp, arp, ip reass, 2×dhcp + sntp (2 timers) + margin */
 /* TCP sized for ONE small control connection (WebSocket to the server): tiny
  * window and send buffer, no out-of-order queue — a few KB of RAM in total. */
 #define MEMP_NUM_TCP_PCB            2

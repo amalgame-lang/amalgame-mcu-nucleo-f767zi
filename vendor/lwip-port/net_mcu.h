@@ -24,4 +24,14 @@ unsigned long long net_micros(void); /* elapsed us since boot: SysTick ms + STK_
                                       * (216 ticks/us @ 216 MHz AHB) — ~5 ns resolution,
                                       * no debug session needed (unlike DWT_CYCCNT). */
 
+/* Wall clock (SNTP → vendor/time/wallclock.c). Started automatically once DHCP is bound; servers = DHCP option
+ * 42 (or `net_time_set_server`), then fixed fallbacks. Diagnostics for the `cfg`/`time` control lines. */
+int         net_time_set_server(const char *ip);   /* manual NTP server (idx 0, DHCP ignored); NULL/"" = back to auto. 1 ok / 0 bad ip */
+void        net_time_stop(void);                   /* bench: stop SNTP (volatile) */
+void        net_time_restart(void);                /* re-arm SNTP now (after stop / server change) */
+int         net_time_mode(void);                   /* 0 = auto (DHCP + fallbacks), 1 = manual, 2 = stopped */
+const char *net_time_server_str(void);             /* server currently polled ("0.0.0.0" = none) */
+unsigned    net_time_reach(void);                  /* lwIP reachability shift register of that server (bit0 = last poll) */
+unsigned    net_time_sntp_started(void);           /* 1 once sntp_init ran (DHCP bound) */
+
 #endif /* MCNET_NET_MCU_H */

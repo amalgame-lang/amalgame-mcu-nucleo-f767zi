@@ -6,6 +6,9 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/rng.h>
 #include "mbedtls_port.h"
+#include "wallclock.h"
+#include "mbedtls/platform_time.h"
+#include "mbedtls/platform_util.h"
 
 /* ── allocator: first-fit free list over a static pool (mbedTLS frees in LIFO-ish order, so a
  * simple list with coalescing is enough; no fragmentation issue observed at these sizes) ── */
@@ -58,6 +61,25 @@ int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t 
         memcpy(output + i, &r, k); i += k;
     }
     *olen = len; return 0;
+}
+
+/* ── time: wall clock fed by SNTP (vendor/time/wallclock.c, bound by net_mcu.c). The linkproof / tls_probe
+ * builds have no network: the weak stubs keep them linking with an 'unknown' clock. ── */
+__attribute__((weak)) uint32_t wallclock_now(void) { return 0; }
+__attribute__((weak)) uint32_t wallclock_ms(void)  { return 0; }
+__attribute__((weak)) void wallclock_civil(uint32_t t, int *y, int *mo, int *d, int *h, int *mi, int *s, int *wd, int *yd) {
+    (void) t; if (y) *y = 1970; if (mo) *mo = 1; if (d) *d = 1; if (h) *h = 0; if (mi) *mi = 0; if (s) *s = 0; if (wd) *wd = 4; if (yd) *yd = 0;
+}
+time_t mcu_tls_time(time_t *t) { time_t v = (time_t) wallclock_now(); if (t) *t = v; return v; }
+mbedtls_ms_time_t mbedtls_ms_time(void) { return (mbedtls_ms_time_t) wallclock_ms(); }
+struct tm *mbedtls_platform_gmtime_r(const mbedtls_time_t *tt, struct tm *tm_buf) {
+    if (!tt || !tm_buf || *tt < 0 || *tt > 0xFFFFFFFFll) return 0;
+    int y, mo, d, h, mi, s, wd, yd;
+    wallclock_civil((uint32_t) *tt, &y, &mo, &d, &h, &mi, &s, &wd, &yd);
+    memset(tm_buf, 0, sizeof *tm_buf);
+    tm_buf->tm_year = y - 1900; tm_buf->tm_mon = mo - 1; tm_buf->tm_mday = d;
+    tm_buf->tm_hour = h; tm_buf->tm_min = mi; tm_buf->tm_sec = s; tm_buf->tm_wday = wd; tm_buf->tm_yday = yd;
+    return tm_buf;
 }
 
 /* ── std stubs (never on the handshake path) ── */

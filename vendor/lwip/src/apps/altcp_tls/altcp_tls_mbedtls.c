@@ -126,6 +126,7 @@ struct altcp_tls_entropy_rng {
 };
 static struct altcp_tls_entropy_rng *altcp_tls_entropy_rng;
 unsigned int altcp_mbedtls_prof_write_us, altcp_mbedtls_prof_bio_us, altcp_mbedtls_prof_bio_calls;   /* MusiCall profiling */
+int altcp_mbedtls_last_hs_err; unsigned altcp_mbedtls_last_verify, altcp_mbedtls_hs_failures;   /* MusiCall: last handshake failure (error + X.509 verify flags) */
 
 static err_t altcp_mbedtls_lower_recv(void *arg, struct altcp_pcb *inner_conn, struct pbuf *p, err_t err);
 static err_t altcp_mbedtls_setup(void *conf, struct altcp_pcb *conn, struct altcp_pcb *inner_conn);
@@ -299,6 +300,7 @@ altcp_mbedtls_lower_recv_process(struct altcp_pcb *conn, altcp_mbedtls_state_t *
     }
     if (ret != 0) {
       LWIP_DEBUGF(ALTCP_MBEDTLS_DEBUG, ("mbedtls_ssl_handshake failed: %d\n", ret));
+      altcp_mbedtls_last_hs_err = ret; altcp_mbedtls_last_verify = (unsigned) mbedtls_ssl_get_verify_result(&state->ssl_context); altcp_mbedtls_hs_failures++;
       /* handshake failed, connection has to be closed */
       if (conn->err) {
         conn->err(conn->arg, ERR_CLSD);

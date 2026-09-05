@@ -2,6 +2,8 @@
 #ifndef MBEDTLS_PORT_H
 #define MBEDTLS_PORT_H
 #include <stddef.h>
+#include <time.h>
+time_t mcu_tls_time(time_t *t);   /* UNIX seconds from the wall clock, 0 while unknown */
 void  *mcu_tls_calloc(size_t n, size_t size);
 void   mcu_tls_free(void *p);
 int    mcu_tls_snprintf(char *s, size_t n, const char *fmt, ...);

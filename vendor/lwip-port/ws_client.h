@@ -28,4 +28,13 @@ extern uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;
 int ws_client_tls_session_saved(void);
 uint32_t ws_client_tls_resumed_tries(void);
 int ws_client_tls_session_id_len(void);
+void ws_client_forget_session(void);         /* drop the saved TLS session (next connect = full handshake) */
+/* wss:// needs the wall clock (certificate dates): while wallclock_synced() is 0 no handshake is attempted
+ * (WS_TLS_NEEDS_TIME=0 at build time to disable — bench only). */
+uint32_t ws_client_time_waits(void);         /* polls skipped because the clock was unknown */
+/* last TLS handshake failure seen by the altcp glue: mbedTLS error (e.g. -0x2700 = certificate verify
+ * failed) and the X.509 verify flags (0x01 expired, 0x200 not yet valid …); 0/0 = none since boot */
+int ws_client_tls_last_error(void);
+unsigned ws_client_tls_last_verify(void);
+unsigned ws_client_tls_failures(void);
 #endif
