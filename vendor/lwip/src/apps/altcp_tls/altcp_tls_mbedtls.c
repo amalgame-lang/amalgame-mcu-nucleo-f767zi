@@ -70,7 +70,7 @@
 /* @todo: which includes are really needed? */
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
-#include "mbedtls/certs.h"
+#include "mbedtls/certs.h"          /* MusiCall: shimmed (vendor/mbedtls-port/mbedtls/) for mbedTLS 3.x */
 #include "mbedtls/x509.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/net_sockets.h"
@@ -125,6 +125,7 @@ struct altcp_tls_entropy_rng {
   int ref;
 };
 static struct altcp_tls_entropy_rng *altcp_tls_entropy_rng;
+unsigned int altcp_mbedtls_prof_write_us, altcp_mbedtls_prof_bio_us, altcp_mbedtls_prof_bio_calls;   /* MusiCall profiling */
 
 static err_t altcp_mbedtls_lower_recv(void *arg, struct altcp_pcb *inner_conn, struct pbuf *p, err_t err);
 static err_t altcp_mbedtls_setup(void *conf, struct altcp_pcb *conn, struct altcp_pcb *inner_conn);
@@ -692,7 +693,9 @@ altcp_tls_set_session(struct altcp_pcb *conn, struct altcp_tls_session *session)
   if (session && conn && conn->state) {
     altcp_mbedtls_state_t *state = (altcp_mbedtls_state_t *)conn->state;
     int ret = -1;
+#if defined(MBEDTLS_HAVE_TIME)   /* MusiCall patch: `start` only exists with MBEDTLS_HAVE_TIME in 3.x */
     if (session->data.start)
+#endif
       ret = mbedtls_ssl_set_session(&state->ssl_context, &session->data);
     return ret < 0 ? ERR_VAL : ERR_OK;
   }
@@ -909,7 +912,8 @@ err_t altcp_tls_config_server_add_privkey_cert(struct altcp_tls_config *config,
     return ERR_VAL;
   }
 
-  ret = mbedtls_pk_parse_key(pkey, (const unsigned char *) privkey, privkey_len, privkey_pass, privkey_pass_len);
+  ret = mbedtls_pk_parse_key(pkey, (const unsigned char *) privkey, privkey_len, privkey_pass, privkey_pass_len,
+                             mbedtls_ctr_drbg_random, &altcp_tls_entropy_rng->ctr_drbg); /* MusiCall patch: mbedTLS 3.x signature */
   if (ret != 0) {
     LWIP_DEBUGF(ALTCP_MBEDTLS_DEBUG, ("mbedtls_pk_parse_public_key failed: %d\n", ret));
     mbedtls_x509_crt_free(srvcert);
@@ -1012,7 +1016,8 @@ altcp_tls_create_config_client_2wayauth(const u8_t *ca, size_t ca_len, const u8_
   }
 
   mbedtls_pk_init(conf->pkey);
-  ret = mbedtls_pk_parse_key(conf->pkey, privkey, privkey_len, privkey_pass, privkey_pass_len);
+  ret = mbedtls_pk_parse_key(conf->pkey, privkey, privkey_len, privkey_pass, privkey_pass_len,
+                             mbedtls_ctr_drbg_random, &altcp_tls_entropy_rng->ctr_drbg); /* MusiCall patch: mbedTLS 3.x signature */
   if (ret != 0) {
     LWIP_DEBUGF(ALTCP_MBEDTLS_DEBUG, ("mbedtls_pk_parse_key failed: %d 0x%x\n", ret, -1*ret));
     altcp_tls_free_config(conf);
@@ -1198,7 +1203,8 @@ altcp_mbedtls_sndbuf(struct altcp_pcb *conn)
           size_t ret;
 #if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH)
           /* @todo: adjust ssl_added to real value related to negotiated cipher */
-          size_t max_frag_len = mbedtls_ssl_get_max_frag_len(&state->ssl_context);
+          int mfl = mbedtls_ssl_get_max_out_record_payload(&state->ssl_context); /* MusiCall patch: 3.x API */
+          size_t max_frag_len = mfl > 0 ? (size_t) mfl : max_len;
           max_len = LWIP_MIN(max_frag_len, max_len);
 #endif
           /* Adjust sndbuf of inner_conn with what added by SSL */
@@ -1247,7 +1253,12 @@ altcp_mbedtls_write(struct altcp_pcb *conn, const void *dataptr, u16_t len, u8_t
       return ERR_MEM;
     }
   }
-  ret = mbedtls_ssl_write(&state->ssl_context, (const unsigned char *)dataptr, len);
+  { /* MusiCall profiling (bench only) */
+    extern unsigned long long net_micros(void);
+    unsigned long long t0 = net_micros(); altcp_mbedtls_prof_bio_us = 0; altcp_mbedtls_prof_bio_calls = 0;
+    ret = mbedtls_ssl_write(&state->ssl_context, (const unsigned char *)dataptr, len);
+    altcp_mbedtls_prof_write_us = (unsigned int) (net_micros() - t0);
+  }
   /* try to send data... */
   altcp_output(conn->inner_conn);
   if (ret >= 0) {
@@ -1292,7 +1303,9 @@ altcp_mbedtls_bio_send(void *ctx, const unsigned char *dataptr, size_t size)
 
   while (size_left) {
     u16_t write_len = (u16_t)LWIP_MIN(size_left, 0xFFFF);
+    extern unsigned long long net_micros(void); unsigned long long tb = net_micros();   /* MusiCall profiling */
     err_t err = altcp_write(conn->inner_conn, (const void *)dataptr, write_len, apiflags);
+    altcp_mbedtls_prof_bio_us += (unsigned int) (net_micros() - tb); altcp_mbedtls_prof_bio_calls++;
     if (err == ERR_OK) {
       written += write_len;
       size_left -= write_len;

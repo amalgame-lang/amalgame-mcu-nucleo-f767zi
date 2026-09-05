@@ -63,6 +63,23 @@ vector_fn const vector_table[16 + 104] = {
  * no banner, nothing). -mfloat-abi=hard -mfpu=fpv5-d16 is used project-wide, so this
  * must run first, unconditionally — not just for firmware that "uses floats". */
 #define SCB_CPACR (*(volatile uint32_t *) 0xE000ED88u)
+/* L1 instruction cache (Cortex-M7). Code lives in flash on the AXI bus at 0x0800 0000, where the ART
+ * accelerator does NOT apply (ART only serves the ITCM alias at 0x0020 0000): without the I-cache
+ * every fetch pays the flash wait states and tight loops crawl — measured 2026-09-05: SHA-256 at
+ * 246 cycles/byte, a 650-byte TLS record in 5.8 ms. The I-cache has no coherence issue with DMA
+ * (DMA never writes code) and the D-cache stays OFF (audio/ETH buffers are DMA targets).
+ * -DBOARD_NO_ICACHE=1 to compare. */
+#define SCB_CCR     (*(volatile uint32_t *) 0xE000ED14u)
+#define SCB_ICIALLU (*(volatile uint32_t *) 0xE000EF50u)
+static void ICache_Enable(void) {
+#ifndef BOARD_NO_ICACHE
+    __asm volatile ("dsb"); __asm volatile ("isb");
+    SCB_ICIALLU = 0u;                       /* invalidate */
+    __asm volatile ("dsb"); __asm volatile ("isb");
+    SCB_CCR |= (1u << 17);                  /* IC = 1 */
+    __asm volatile ("dsb"); __asm volatile ("isb");
+#endif
+}
 static void Fpu_Enable(void) {
     SCB_CPACR |= (0xFu << 20);   /* CP10 + CP11: full access */
     __asm volatile ("dsb");
@@ -71,6 +88,7 @@ static void Fpu_Enable(void) {
 
 void Reset_Handler(void) {
     Fpu_Enable();
+    ICache_Enable();
     uint32_t *src = &_sidata, *dst = &_sdata;
     while (dst < &_edata) *dst++ = *src++;
     for (dst = &_sbss; dst < &_ebss; ) *dst++ = 0;

@@ -1,0 +1,5 @@
+mbedtls-3.6.7 (https://github.com/Mbed-TLS/mbedtls, tag mbedtls-3.6.7) — library/ + include/ only, unmodified. Config + port: ../mbedtls-port/.
+
+lwIP altcp_tls glue (vendor/lwip/src/apps/altcp_tls/altcp_tls_mbedtls.c) targets mbedTLS 2.x; MusiCall patches
+for 3.x are marked "MusiCall patch" in the file + shims in vendor/mbedtls-port/mbedtls/{certs.h,ssl_internal.h}.
+Build with -DMBEDTLS_ALLOW_PRIVATE_ACCESS (the glue reads ssl_context.out_left).

@@ -14,6 +14,17 @@
 #define LWIP_IPV4                   1
 #define LWIP_IPV6                   0
 #define LWIP_TCP                    1   /* control channel: WebSocket client (ws_client.c), 2026-09-04 */
+/* TLS (2026-09-05): build with -DMC_TLS=1 → altcp layer + mbedTLS glue (vendor/mbedtls-port). Without it
+ * ws_client.c keeps the raw tcp_* API and no altcp code is compiled in. */
+#ifdef MC_TLS
+#define LWIP_ALTCP                  1
+#define LWIP_ALTCP_TLS              1
+#define LWIP_ALTCP_TLS_MBEDTLS      1
+#define MEMP_NUM_ALTCP_PCB          4   /* one TLS connection = 2 altcp pcbs (tls over tcp) */
+/* The glue defaults to VERIFY_OPTIONAL (a bad chain or name is silently accepted — measured 2026-09-05:
+ * a wrong SNI still connected). REQUIRED: chain to the embedded roots + name match, or no connection. */
+#define ALTCP_MBEDTLS_AUTHMODE      MBEDTLS_SSL_VERIFY_REQUIRED
+#endif
 #define LWIP_UDP                    1
 #define LWIP_RAW                    0
 #define LWIP_ARP                    1
@@ -28,7 +39,11 @@
 #define MEM_LIBC_MALLOC             0
 #define MEMP_MEM_MALLOC             0
 #define MEM_ALIGNMENT               4
+#ifdef MC_TLS
+#define MEM_SIZE                    (16 * 1024)   /* + altcp_tls state/config (mem_calloc) */
+#else
 #define MEM_SIZE                    (12 * 1024)
+#endif
 #define MEMP_NUM_PBUF               24
 #define MEMP_NUM_UDP_PCB            6
 #define MEMP_NUM_SYS_TIMEOUT        8

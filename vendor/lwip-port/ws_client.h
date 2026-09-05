@@ -18,4 +18,10 @@ int  ws_client_is_open(void);                /* 1 = handshake done, frames flowi
 int  ws_client_send_text(const char *s);     /* 1 = queued; 0 = not open / no buffer */
 uint32_t ws_client_reconnects(void);         /* diagnostics */
 uint32_t ws_client_rx_frames(void);
+/* wss:// (build with MC_TLS=1): TLS with SNI/name check `sni` against the embedded roots. Returns 0 if
+ * the firmware was built without TLS. Call before ws_client_start(). */
+int ws_client_set_tls(int on, const char *sni);
+int ws_client_is_tls(void);
+/* profiling: µs spent in the last send, split sndbuf / write (TLS encrypt) / output (tcp_output) */
+extern uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;
 #endif

@@ -4,6 +4,42 @@
 #include "lwip/tcp.h"
 #include "lwip/ip_addr.h"
 #include <string.h>
+#if LWIP_ALTCP
+/* altcp: same code path for ws:// (altcp_tcp) and wss:// (altcp_tls over mbedTLS, vendor/mbedtls-port) */
+#include "lwip/altcp.h"
+#include "lwip/altcp_tcp.h"
+#include "lwip/altcp_tls.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls_port.h"
+#define WS_PCB      struct altcp_pcb
+#define ws_pcb_arg  altcp_arg
+#define ws_pcb_recv altcp_recv
+#define ws_pcb_err  altcp_err
+#define ws_pcb_sent altcp_sent
+#define ws_pcb_poll altcp_poll
+#define ws_pcb_close altcp_close
+#define ws_pcb_abort altcp_abort
+#define ws_pcb_sndbuf altcp_sndbuf
+#define ws_pcb_write altcp_write
+#define ws_pcb_output altcp_output
+#define ws_pcb_recved altcp_recved
+#define ws_pcb_connect altcp_connect
+static int ws_tls; static char ws_sni[64]; static struct altcp_tls_config *ws_tls_conf;
+#else
+#define WS_PCB      struct tcp_pcb
+#define ws_pcb_arg  tcp_arg
+#define ws_pcb_recv tcp_recv
+#define ws_pcb_err  tcp_err
+#define ws_pcb_sent tcp_sent
+#define ws_pcb_poll tcp_poll
+#define ws_pcb_close tcp_close
+#define ws_pcb_abort tcp_abort
+#define ws_pcb_sndbuf tcp_sndbuf
+#define ws_pcb_write tcp_write
+#define ws_pcb_output tcp_output
+#define ws_pcb_recved tcp_recved
+#define ws_pcb_connect tcp_connect
+#endif
 
 #define WS_RX_BUF   1024      /* one server line (status/commands are < 300 B) */
 #define WS_TX_MAX   700
@@ -11,7 +47,7 @@
 
 enum { WS_IDLE, WS_CONNECTING, WS_HANDSHAKE, WS_OPEN, WS_CLOSED };
 
-static struct tcp_pcb *ws_pcb;
+static WS_PCB *ws_pcb;
 static int      ws_state = WS_IDLE;
 static ip_addr_t ws_ip; static uint16_t ws_port;
 static char     ws_path[64], ws_host[64], ws_hello[200];
@@ -21,6 +57,7 @@ static uint32_t ws_next_try_ms, ws_backoff_ms = 2000;
 static uint32_t ws_last_rx_ms, ws_ping_sent_ms;
 static uint32_t ws_reconnects, ws_frames;
 static uint32_t ws_rand_state;
+uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;   /* profiling of the last frame send (sndbuf / write / output) */
 
 static uint32_t ws_rand(void) {           /* xorshift, seeded with UID + time */
     if (!ws_rand_state) ws_rand_state = net_uid32() ^ (net_millis() * 2654435761u) ^ 0x9E3779B9u;
@@ -30,8 +67,8 @@ static uint32_t ws_rand(void) {           /* xorshift, seeded with UID + time */
 
 static void ws_close_pcb(void) {
     if (ws_pcb) {
-        tcp_arg(ws_pcb, NULL); tcp_recv(ws_pcb, NULL); tcp_err(ws_pcb, NULL); tcp_sent(ws_pcb, NULL); tcp_poll(ws_pcb, NULL, 0);
-        if (tcp_close(ws_pcb) != ERR_OK) tcp_abort(ws_pcb);
+        ws_pcb_arg(ws_pcb, NULL); ws_pcb_recv(ws_pcb, NULL); ws_pcb_err(ws_pcb, NULL); ws_pcb_sent(ws_pcb, NULL); ws_pcb_poll(ws_pcb, NULL, 0);
+        if (ws_pcb_close(ws_pcb) != ERR_OK) ws_pcb_abort(ws_pcb);
         ws_pcb = NULL;
     }
 }
@@ -62,9 +99,14 @@ static int ws_send_frame(int opcode, const unsigned char *data, int n) {
     uint32_t r = ws_rand(); unsigned char mask[4] = { r, r >> 8, r >> 16, r >> 24 };
     memcpy(&buf[p], mask, 4); p += 4;
     for (int i = 0; i < n; i++) buf[p++] = data[i] ^ mask[i & 3];
-    if (tcp_sndbuf(ws_pcb) < (u16_t) p) return 0;
-    if (tcp_write(ws_pcb, buf, (u16_t) p, TCP_WRITE_FLAG_COPY) != ERR_OK) return 0;
-    tcp_output(ws_pcb);
+    unsigned long long t0 = net_micros();
+    if (ws_pcb_sndbuf(ws_pcb) < (u16_t) p) return 0;
+    unsigned long long t1 = net_micros();
+    if (ws_pcb_write(ws_pcb, buf, (u16_t) p, TCP_WRITE_FLAG_COPY) != ERR_OK) return 0;
+    unsigned long long t2 = net_micros();
+    ws_pcb_output(ws_pcb);
+    unsigned long long t3 = net_micros();
+    ws_prof_sndbuf_us = (uint32_t) (t1 - t0); ws_prof_write_us = (uint32_t) (t2 - t1); ws_prof_output_us = (uint32_t) (t3 - t2);
     return 1;
 }
 
@@ -83,15 +125,15 @@ static void ws_key(char out[25]) {          /* base64 of 16 random bytes */
     uint32_t v = k[15] << 16; out[o++] = b64[(v >> 18) & 63]; out[o++] = b64[(v >> 12) & 63]; out[o++] = '='; out[o++] = '='; out[o] = 0;
 }
 
-static err_t ws_connected_cb(void *arg, struct tcp_pcb *pcb, err_t err) {
+static err_t ws_connected_cb(void *arg, WS_PCB *pcb, err_t err) {
     (void) arg;
     if (err != ERR_OK) { ws_schedule_retry(); return err; }
     char key[25]; ws_key(key);
     char hs[WS_HS_MAX]; int n = 0;
     n += ws_cat(hs + n, "GET "); n += ws_cat(hs + n, ws_path); n += ws_cat(hs + n, " HTTP/1.1\r\nHost: "); n += ws_cat(hs + n, ws_host); n += ws_cat(hs + n, "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n");
     n += ws_cat(hs + n, "Sec-WebSocket-Key: "); n += ws_cat(hs + n, key); n += ws_cat(hs + n, "\r\nSec-WebSocket-Version: 13\r\n\r\n");
-    if (tcp_write(pcb, hs, (u16_t) n, TCP_WRITE_FLAG_COPY) != ERR_OK) { ws_schedule_retry(); return ERR_OK; }
-    tcp_output(pcb);
+    if (ws_pcb_write(pcb, hs, (u16_t) n, TCP_WRITE_FLAG_COPY) != ERR_OK) { ws_schedule_retry(); return ERR_OK; }
+    ws_pcb_output(pcb);
     ws_state = WS_HANDSHAKE; ws_rx_len = 0; ws_last_rx_ms = net_millis();
     return ERR_OK;
 }
@@ -117,14 +159,14 @@ static void ws_parse_frames(void) {
     }
 }
 
-static err_t ws_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
+static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
     (void) arg; (void) err;
     if (!p) { ws_schedule_retry(); return ERR_OK; }              /* remote close */
     int room = WS_RX_BUF - ws_rx_len;
     int take = p->tot_len < room ? p->tot_len : room;
     pbuf_copy_partial(p, ws_rx + ws_rx_len, (u16_t) take, 0);
     ws_rx_len += take;
-    tcp_recved(pcb, p->tot_len);
+    ws_pcb_recved(pcb, p->tot_len);
     pbuf_free(p);
     ws_last_rx_ms = net_millis();
     if (ws_state == WS_HANDSHAKE) {
@@ -143,13 +185,27 @@ static err_t ws_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t er
 
 static void ws_connect(void) {
     ws_close_pcb();
+#if LWIP_ALTCP
+    if (ws_tls) {
+        if (!ws_tls_conf) {
+            ws_tls_conf = altcp_tls_create_config_client((const u8_t *) mcu_tls_roots_pem, mcu_tls_roots_pem_len);
+            /* struct altcp_tls_config starts with the mbedtls_ssl_config: cap records at 4 KB (our buffers) */
+            if (ws_tls_conf) mbedtls_ssl_conf_max_frag_len((mbedtls_ssl_config *) ws_tls_conf, MBEDTLS_SSL_MAX_FRAG_LEN_4096);
+        }
+        ws_pcb = ws_tls_conf ? altcp_tls_new(ws_tls_conf, IPADDR_TYPE_V4) : NULL;
+        if (ws_pcb) mbedtls_ssl_set_hostname((mbedtls_ssl_context *) altcp_tls_context(ws_pcb), ws_sni);   /* SNI + name check */
+    } else {
+        ws_pcb = altcp_tcp_new();
+    }
+#else
     ws_pcb = tcp_new();
+#endif
     if (!ws_pcb) { ws_schedule_retry(); return; }
-    tcp_err(ws_pcb, ws_err_cb);
-    tcp_recv(ws_pcb, ws_recv_cb);
+    ws_pcb_err(ws_pcb, ws_err_cb);
+    ws_pcb_recv(ws_pcb, ws_recv_cb);
     ws_state = WS_CONNECTING; ws_rx_len = 0;
     ws_reconnects++;
-    if (tcp_connect(ws_pcb, &ws_ip, ws_port, ws_connected_cb) != ERR_OK) ws_schedule_retry();
+    if (ws_pcb_connect(ws_pcb, &ws_ip, ws_port, ws_connected_cb) != ERR_OK) ws_schedule_retry();
 }
 
 void ws_client_start(const char *ip, uint16_t port, const char *path, const char *host, const char *hello, ws_line_cb on_line) {
@@ -163,6 +219,25 @@ void ws_client_start(const char *ip, uint16_t port, const char *path, const char
 }
 
 void ws_client_stop(void) { ws_close_pcb(); ws_state = WS_IDLE; ws_rx_len = 0; }
+
+/* wss://: TLS with server-name = sni (SNI + certificate name check against the embedded roots).
+ * Call before ws_client_start. Ignored (returns 0) when built without MC_TLS. */
+int ws_client_set_tls(int on, const char *sni) {
+#if LWIP_ALTCP
+    ws_tls = on ? 1 : 0;
+    if (sni) strncpy(ws_sni, sni, sizeof ws_sni - 1); else ws_sni[0] = 0;
+    return 1;
+#else
+    (void) on; (void) sni; return 0;
+#endif
+}
+int ws_client_is_tls(void) {
+#if LWIP_ALTCP
+    return ws_tls;
+#else
+    return 0;
+#endif
+}
 
 void ws_client_poll(void) {
     uint32_t now = net_millis();
