@@ -9,9 +9,12 @@ MEMORY
 {
   FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 2048K
   RAM  (rwx) : ORIGIN = 0x20020000, LENGTH = 384K   /* SRAM1+SRAM2 (DMA-reachable) */
+  DTCM (rw)  : ORIGIN = 0x20000000, LENGTH = 128K   /* CPU-only, zero wait-state: hot data placed there explicitly (.dtcm) */
 }
 
-_estack = ORIGIN(RAM) + LENGTH(RAM);
+/* Stack in DTCM (0 wait-state; mbedTLS/bignum temporaries and every hot local benefit). No DMA buffer may live on the stack:
+ * lwIP copies (TCP_WRITE_FLAG_COPY), the audio/ETH buffers are static in SRAM. Measured 2026-09-05 (TLS handshake). */
+_estack = ORIGIN(DTCM) + LENGTH(DTCM);
 
 SECTIONS
 {
@@ -21,4 +24,6 @@ SECTIONS
   _sidata = LOADADDR(.data);
   .data : { _sdata = .; *(.data*) _edata = .; } > RAM AT > FLASH
   .bss  : { _sbss = .; *(.bss*) *(COMMON) _ebss = .; } > RAM
+  /* NOLOAD, not zeroed by startup: only for buffers whose users initialise them (mbedTLS pool: calloc memsets). NEVER a DMA buffer. */
+  .dtcm (NOLOAD) : { *(.dtcm*) } > DTCM
 }

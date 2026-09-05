@@ -16,7 +16,7 @@
 #define MCU_TLS_POOL_BYTES (28 * 1024)   /* measured: 13.6 KB to ClientHello; full handshake ≈ 20 KB (see docs) */
 #endif
 typedef struct blk { size_t size; struct blk *next; int used; } blk_t;   /* 12 B header, 8-aligned payload */
-static uint8_t  pool[MCU_TLS_POOL_BYTES] __attribute__((aligned(8)));
+static uint8_t  pool[MCU_TLS_POOL_BYTES] __attribute__((aligned(8), section(".dtcm")));   /* DTCM: bignum limbs live here (0 wait-state, CPU-only) */
 static blk_t   *head;
 static size_t   used_now, used_hwm;
 static unsigned failures;

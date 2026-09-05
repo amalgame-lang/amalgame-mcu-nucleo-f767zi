@@ -1,6 +1,9 @@
-/* Generated from isrgrootx1.pem + isrg-root-x2.pem (letsencrypt.org/certs). */
+/* Generated from isrgrootx1.pem + isrg-root-x2.pem + isrg-root-ye.pem (letsencrypt.org/certs). Trusting Root YE
+ * directly (it is a genuine ISRG root, cross-signed by X2) lets the chain verification stop one P-384 ECDSA earlier
+ * on the current Let's Encrypt hierarchy (leaf <- YE2 <- Root YE): measured 2026-09-05 on the F767. */
 #include "mbedtls_port.h"
 const char mcu_tls_roots_pem[] =
+    /* ISRG Root X1 (RSA-4096) */
     "-----BEGIN CERTIFICATE-----\n"
     "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
     "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
@@ -32,6 +35,7 @@ const char mcu_tls_roots_pem[] =
     "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
     "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
     "-----END CERTIFICATE-----\n"
+    /* ISRG Root X2 (P-384) */
     "-----BEGIN CERTIFICATE-----\n"
     "MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\n"
     "CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\n"
@@ -45,5 +49,18 @@ const char mcu_tls_roots_pem[] =
     "zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n"
     "tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n"
     "/q4AaOeMSQ+2b1tbFfLn\n"
+    "-----END CERTIFICATE-----\n"
+    /* ISRG Root YE (P-384, self-signed, 2025-2045) */
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIB2TCCAWCgAwIBAgIRAKQCa6LvbHwg1AR+XmWmk4AwCgYIKoZIzj0EAwMwLjEL\n"
+    "MAkGA1UEBhMCVVMxDTALBgNVBAoTBElTUkcxEDAOBgNVBAMTB1Jvb3QgWUUwHhcN\n"
+    "MjUwOTAzMDAwMDAwWhcNNDUwOTAyMjM1OTU5WjAuMQswCQYDVQQGEwJVUzENMAsG\n"
+    "A1UEChMESVNSRzEQMA4GA1UEAxMHUm9vdCBZRTB2MBAGByqGSM49AgEGBSuBBAAi\n"
+    "A2IABDwS/6vhrcVqcbBo+wgdI3fwn9x7DNJJOY/lTOti0vkwuRN87RhEhTH17E7X\n"
+    "yFjWsPYhIPt/wzOqxTd2b+4ZJNy9ID04YywF9U5zasDVyGSNErVNtz8uSGh5izW8\n"
+    "7j77GaNCMEAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0O\n"
+    "BBYEFKPIJlqOoUzQNWP8myPIOq5W809WMAoGCCqGSM49BAMDA2cAMGQCMHhMr8N9\n"
+    "LdL1VQKs9BdV81r76eXRB6mtjuNjzk6/lBsPNToWLTDzGYgtQKO1jl63uAIwGV7m\n"
+    "onyF377c+MM1oqVNs17sgu7F9YKZwgLmVbeOMDbKAXHtKMDLbiGllCcs8f47\n"
     "-----END CERTIFICATE-----\n";
 const size_t mcu_tls_roots_pem_len = sizeof(mcu_tls_roots_pem);

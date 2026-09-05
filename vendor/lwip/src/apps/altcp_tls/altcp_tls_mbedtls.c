@@ -127,6 +127,8 @@ struct altcp_tls_entropy_rng {
 static struct altcp_tls_entropy_rng *altcp_tls_entropy_rng;
 unsigned int altcp_mbedtls_prof_write_us, altcp_mbedtls_prof_bio_us, altcp_mbedtls_prof_bio_calls;   /* MusiCall profiling */
 int altcp_mbedtls_last_hs_err; unsigned altcp_mbedtls_last_verify, altcp_mbedtls_hs_failures;   /* MusiCall: last handshake failure (error + X.509 verify flags) */
+unsigned altcp_mbedtls_hs_prof_us[24];   /* MusiCall (-DMC_HS_PROF=1): µs spent per handshake state, indexed by the state BEFORE each step */
+unsigned long long net_micros(void);   /* net_mcu.h */
 
 static err_t altcp_mbedtls_lower_recv(void *arg, struct altcp_pcb *inner_conn, struct pbuf *p, err_t err);
 static err_t altcp_mbedtls_setup(void *conf, struct altcp_pcb *conn, struct altcp_pcb *inner_conn);
@@ -284,7 +286,17 @@ altcp_mbedtls_lower_recv_process(struct altcp_pcb *conn, altcp_mbedtls_state_t *
 {
   if (!(state->flags & ALTCP_MBEDTLS_FLAGS_HANDSHAKE_DONE)) {
     /* handle connection setup (handshake not done) */
+#ifdef MC_HS_PROF
+    int ret = 0;   /* same loop as mbedtls_ssl_handshake(), one step at a time, timed per state */
+    while (state->ssl_context.state != MBEDTLS_SSL_HANDSHAKE_OVER) {
+      int st = state->ssl_context.state; unsigned long long t0 = net_micros();
+      ret = mbedtls_ssl_handshake_step(&state->ssl_context);
+      if (st >= 0 && st < 24) altcp_mbedtls_hs_prof_us[st] += (unsigned) (net_micros() - t0);
+      if (ret != 0) break;
+    }
+#else
     int ret = mbedtls_ssl_handshake(&state->ssl_context);
+#endif
     /* try to send data... */
     altcp_output(conn->inner_conn);
     if (state->bio_bytes_read) {
