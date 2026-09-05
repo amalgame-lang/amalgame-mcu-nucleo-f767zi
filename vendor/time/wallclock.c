@@ -4,7 +4,7 @@
 static uint32_t (*ms_fn)(void);
 static uint32_t base_sec, base_ms, sets;
 static int32_t  last_step;
-static int      synced;
+static int      synced, source;
 
 void wallclock_bind(uint32_t (*ms_now)(void)) { ms_fn = ms_now; }
 uint32_t wallclock_ms(void) { return ms_fn ? ms_fn() : 0; }
@@ -12,11 +12,15 @@ uint32_t wallclock_now(void) {
     if (!synced) return 0;
     return base_sec + (wallclock_ms() - base_ms) / 1000u;     /* unsigned wrap-safe for < 49 days between sets */
 }
-void wallclock_set(uint32_t unix_sec) {
+int wallclock_set_src(uint32_t unix_sec, int src) {
+    if (src == WALLCLOCK_SERVER && source > WALLCLOCK_SERVER) return 0;
     last_step = synced ? (int32_t) (unix_sec - wallclock_now()) : 0;
-    base_sec = unix_sec; base_ms = wallclock_ms(); synced = 1; sets++;
+    base_sec = unix_sec; base_ms = wallclock_ms(); synced = 1; sets++; source = src;
+    return 1;
 }
-void wallclock_clear(void) { synced = 0; base_sec = 0; }
+void wallclock_set(uint32_t unix_sec) { wallclock_set_src(unix_sec, WALLCLOCK_MANUAL); }
+int wallclock_source(void) { return source; }
+void wallclock_clear(void) { synced = 0; base_sec = 0; source = WALLCLOCK_NONE; }
 int wallclock_synced(void) { return synced; }
 uint32_t wallclock_sets(void) { return sets; }
 int32_t wallclock_last_step(void) { return last_step; }

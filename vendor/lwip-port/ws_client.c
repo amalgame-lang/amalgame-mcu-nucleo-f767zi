@@ -16,6 +16,9 @@ extern int altcp_mbedtls_last_hs_err; extern unsigned altcp_mbedtls_last_verify,
 #ifndef WS_TLS_NEEDS_TIME
 #define WS_TLS_NEEDS_TIME 1
 #endif
+#ifndef WS_TLS_TIME_GRACE_MS
+#define WS_TLS_TIME_GRACE_MS 60000
+#endif
 #define WS_PCB      struct altcp_pcb
 #define ws_pcb_arg  altcp_arg
 #define ws_pcb_recv altcp_recv
@@ -57,7 +60,15 @@ static WS_PCB *ws_pcb;
 /* TLS session resumption: the first handshake costs ~2.4 s of blocking crypto (RSA-4096 + ECDHE on the M7);
  * a resumed one (session ID, OpenSSL server cache) skips it. Saved once the WebSocket is open, reused on
  * every reconnect to the same server, dropped when ip/port/sni change. */
-static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries; static uint32_t ws_time_waits;
+static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries; static uint32_t ws_time_waits, ws_tls_degraded, ws_start_ms; static int ws_tls_dates_unchecked;
+/* X.509 verify hook: with no clock at all, drop the two date flags (everything else stays fatal) and remember it */
+static int ws_verify_cb(void *arg, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    (void) arg; (void) crt; (void) depth;
+    if (!wallclock_synced() && (*flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE))) {
+        *flags &= ~(uint32_t) (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE); ws_tls_dates_unchecked = 1;
+    }
+    return 0;
+}
 static void ws_tls_session_drop(void) { if (ws_tls_sess_ok) { altcp_tls_free_session(&ws_tls_sess); ws_tls_sess_ok = 0; } }
 static void ws_tls_session_save(void) {
     if (!ws_tls || !ws_pcb) return;
@@ -212,10 +223,13 @@ static void ws_connect(void) {
             ws_tls_conf = altcp_tls_create_config_client((const u8_t *) mcu_tls_roots_pem, mcu_tls_roots_pem_len);
             /* struct altcp_tls_config starts with the mbedtls_ssl_config: cap records at 4 KB (our buffers) */
             if (ws_tls_conf) mbedtls_ssl_conf_max_frag_len((mbedtls_ssl_config *) ws_tls_conf, MBEDTLS_SSL_MAX_FRAG_LEN_4096);
+            if (ws_tls_conf) mbedtls_ssl_conf_verify((mbedtls_ssl_config *) ws_tls_conf, ws_verify_cb, NULL);
         }
         ws_pcb = ws_tls_conf ? altcp_tls_new(ws_tls_conf, IPADDR_TYPE_V4) : NULL;
         if (ws_pcb) mbedtls_ssl_set_hostname((mbedtls_ssl_context *) altcp_tls_context(ws_pcb), ws_sni);   /* SNI + name check */
         if (ws_pcb && ws_tls_sess_ok) { if (altcp_tls_set_session(ws_pcb, &ws_tls_sess) == ERR_OK) ws_tls_resumed_tries++; }
+        else ws_tls_dates_unchecked = 0;   /* full handshake: the verify hook decides again (a resumed one inherits the flag) */
+        if (ws_pcb && !wallclock_synced()) ws_tls_degraded++;
     } else {
         ws_pcb = altcp_tcp_new();
     }
@@ -240,7 +254,7 @@ void ws_client_start(const char *ip, uint16_t port, const char *path, const char
     strncpy(ws_path, path ? path : "/", sizeof ws_path - 1);
     strncpy(ws_host, host ? host : ip, sizeof ws_host - 1);
     if (hello) strncpy(ws_hello, hello, sizeof ws_hello - 1); else ws_hello[0] = 0;
-    ws_backoff_ms = 2000; ws_reconnects = 0;
+    ws_backoff_ms = 2000; ws_reconnects = 0; ws_start_ms = net_millis();
     ws_state = WS_CLOSED; ws_next_try_ms = net_millis();     /* connect on the next poll */
 }
 
@@ -290,6 +304,20 @@ uint32_t ws_client_time_waits(void) {
     return 0;
 #endif
 }
+uint32_t ws_client_tls_degraded(void) {
+#if LWIP_ALTCP
+    return ws_tls_degraded;
+#else
+    return 0;
+#endif
+}
+int ws_client_tls_dates_unchecked(void) {
+#if LWIP_ALTCP
+    return ws_tls_dates_unchecked;
+#else
+    return 0;
+#endif
+}
 int ws_client_tls_last_error(void) {
 #if LWIP_ALTCP
     return altcp_mbedtls_last_hs_err;
@@ -323,7 +351,7 @@ void ws_client_poll(void) {
     uint32_t now = net_millis();
     if (ws_state == WS_CLOSED && (int32_t) (now - ws_next_try_ms) >= 0) {
 #if LWIP_ALTCP
-        if (ws_tls && WS_TLS_NEEDS_TIME && !wallclock_synced()) { ws_time_waits++; ws_next_try_ms = now + 500; return; }   /* no clock → dates unverifiable → wait */
+        if (ws_tls && WS_TLS_NEEDS_TIME && !wallclock_synced() && now - ws_start_ms < WS_TLS_TIME_GRACE_MS) { ws_time_waits++; ws_next_try_ms = now + 500; return; }   /* no clock → dates unverifiable → wait (bounded) */
 #endif
         ws_connect(); return;
     }

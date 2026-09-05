@@ -65,7 +65,7 @@ static volatile uint32_t mcnet_rx_missed, mcnet_rx_fifo_ovf;
 static int mcnet_ntp_mode;            /* 0 auto, 1 manual, 2 stopped */
 static ip_addr_t mcnet_ntp_manual;
 static unsigned mcnet_sntp_started;
-void net_time_sntp_set(unsigned int sec) { wallclock_set(sec); }
+void net_time_sntp_set(unsigned int sec) { wallclock_set_src(sec, WALLCLOCK_NTP); }
 static void net_time_start(void)
 {
     ip_addr_t a;

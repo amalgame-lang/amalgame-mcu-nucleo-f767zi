@@ -6,7 +6,12 @@
 #define MCU_WALLCLOCK_H
 #include <stdint.h>
 void     wallclock_bind(uint32_t (*ms_now)(void));   /* the monotonic 1 kHz counter */
-void     wallclock_set(uint32_t unix_sec);            /* step the clock (SNTP reply, bench command) */
+void     wallclock_set(uint32_t unix_sec);            /* step the clock by hand (bench) = WALLCLOCK_MANUAL */
+/* Sources, by trust: a less trusted source never overrides a more trusted one (a server-supplied time is not
+ * applied once NTP has answered); NTP and manual always apply. */
+enum { WALLCLOCK_NONE = 0, WALLCLOCK_SERVER = 1, WALLCLOCK_NTP = 2, WALLCLOCK_MANUAL = 3 };
+int      wallclock_set_src(uint32_t unix_sec, int src);  /* 1 = applied, 0 = ignored (lower trust than the current source) */
+int      wallclock_source(void);                         /* WALLCLOCK_* of the current clock */
 void     wallclock_clear(void);                       /* back to 'unknown' */
 int      wallclock_synced(void);                      /* 1 once set at least once */
 uint32_t wallclock_now(void);                         /* UNIX seconds; 0 while unknown */

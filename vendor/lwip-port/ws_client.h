@@ -30,8 +30,13 @@ uint32_t ws_client_tls_resumed_tries(void);
 int ws_client_tls_session_id_len(void);
 void ws_client_forget_session(void);         /* drop the saved TLS session (next connect = full handshake) */
 /* wss:// needs the wall clock (certificate dates): while wallclock_synced() is 0 no handshake is attempted
- * (WS_TLS_NEEDS_TIME=0 at build time to disable — bench only). */
+ * (WS_TLS_NEEDS_TIME=0 at build time to disable — bench only). Bounded degradation: after WS_TLS_TIME_GRACE_MS
+ * (60 s) without a clock the handshake goes ahead and tolerates ONLY the two date flags (expired / not yet
+ * valid) — chain and name are still enforced; such a connection is flagged (dates_unchecked) so the server/UI
+ * can show it, and the server hands the box the time (`time <unix>`) on hello. */
 uint32_t ws_client_time_waits(void);         /* polls skipped because the clock was unknown */
+uint32_t ws_client_tls_degraded(void);       /* handshakes attempted without a clock (grace elapsed) */
+int      ws_client_tls_dates_unchecked(void);/* 1 = the current (or last) connection skipped the date check */
 /* last TLS handshake failure seen by the altcp glue: mbedTLS error (e.g. -0x2700 = certificate verify
  * failed) and the X.509 verify flags (0x01 expired, 0x200 not yet valid …); 0/0 = none since boot */
 int ws_client_tls_last_error(void);
