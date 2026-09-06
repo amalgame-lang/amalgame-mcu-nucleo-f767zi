@@ -57,6 +57,13 @@
 #define MBEDTLS_ECP_NIST_OPTIM
 #define MBEDTLS_ECP_WINDOW_SIZE 4          /* 2→4 + fixed-point: first handshake 2.41 → 1.46 s on the F767 (2026-09-05), +6 KB flash */
 #define MBEDTLS_ECP_FIXED_POINT_OPTIM 1
+/* Handshake DÉCOUPÉ (2026-09-06) : sans ça, un handshake complet monopolise la boucle 511 ms, soit
+ * ~0,5 s d'audio perdu à chaque redémarrage du serveur ou reconnexion réseau (mesure
+ * musicall-box-am/docs/measurements/2026-09-06-handshake-coupure.txt). Avec ECP_RESTARTABLE, les
+ * multiplications de points rendent la main tous les N pas (mbedtls_ecp_set_max_ops) : la crypto
+ * asymétrique — y compris la vérification de la chaîne X.509, qui pesait 1,10 s des 1,44 s — s'étale
+ * sur plusieurs tours de boucle au lieu d'en bloquer un seul. */
+#define MBEDTLS_ECP_RESTARTABLE
 #define MBEDTLS_ECDH_C
 #define MBEDTLS_ECDSA_C
 #define MBEDTLS_RSA_C

@@ -305,6 +305,17 @@ altcp_mbedtls_lower_recv_process(struct altcp_pcb *conn, altcp_mbedtls_state_t *
       state->bio_bytes_read = 0;
     }
 
+#if defined(MBEDTLS_ECP_RESTARTABLE)
+    if (ret == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS) {
+      /* Tranche de calcul ECC terminée, il en reste : on rend la main à l'application (l'audio passe)
+       * et c'est ELLE qui relancera — aucun octet TCP n'arrivera pour déclencher la suite.
+       * Pas d'assertion sur state->rx ici : il peut rester des octets non consommés, contrairement
+       * au cas WANT_READ. */
+      state->flags |= ALTCP_MBEDTLS_FLAGS_CRYPTO_BUSY;
+      return ERR_OK;
+    }
+    state->flags &= ~ALTCP_MBEDTLS_FLAGS_CRYPTO_BUSY;
+#endif
     if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
       /* handshake not done, wait for more recv calls */
       LWIP_ASSERT("in this state, the rx chain should be empty", state->rx == NULL);
@@ -1079,6 +1090,24 @@ altcp_tls_free_config(struct altcp_tls_config *conf)
   altcp_mbedtls_free_config(conf);
   altcp_mbedtls_unref_entropy();
 }
+
+#if defined(MBEDTLS_ECP_RESTARTABLE)
+/* Relance un handshake mis en pause au milieu d'un calcul ECC. À appeler à chaque tour de la boucle
+ * applicative ; retourne 1 tant qu'il reste du travail. Sans ça le handshake resterait en suspens :
+ * mbedTLS attend qu'on le rappelle, et aucun octet TCP ne va arriver pour ça. */
+int
+altcp_tls_handshake_continue(struct altcp_pcb *conn)
+{
+  altcp_mbedtls_state_t *state;
+  if (conn == NULL) { return 0; }
+  state = (altcp_mbedtls_state_t *)conn->state;
+  if (state == NULL) { return 0; }
+  if (!(state->flags & ALTCP_MBEDTLS_FLAGS_CRYPTO_BUSY)) { return 0; }
+  if (state->flags & ALTCP_MBEDTLS_FLAGS_HANDSHAKE_DONE) { return 0; }
+  altcp_mbedtls_lower_recv_process(conn, state);
+  return (state->flags & ALTCP_MBEDTLS_FLAGS_CRYPTO_BUSY) ? 1 : 0;
+}
+#endif
 
 void
 altcp_tls_free_entropy(void)

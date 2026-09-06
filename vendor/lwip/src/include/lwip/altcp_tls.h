@@ -92,6 +92,7 @@ struct altcp_tls_config *altcp_tls_create_config_server_privkey_cert(const u8_t 
 /** @ingroup altcp_tls
  * Create an ALTCP_TLS client configuration handle
  */
+int altcp_tls_handshake_continue(struct altcp_pcb *conn);   /* MBEDTLS_ECP_RESTARTABLE : à appeler depuis la boucle */
 struct altcp_tls_config *altcp_tls_create_config_client(const u8_t *cert, size_t cert_len);
 
 /** @ingroup altcp_tls

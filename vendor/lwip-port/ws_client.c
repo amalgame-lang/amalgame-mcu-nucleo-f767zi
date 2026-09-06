@@ -12,6 +12,10 @@
 #include "lwip/altcp_tcp.h"
 #include "lwip/altcp_tls.h"
 #include "mbedtls/ssl.h"
+#include "mbedtls/ecp.h"
+#ifndef WS_TLS_ECP_MAX_OPS
+#define WS_TLS_ECP_MAX_OPS 500   /* mesuré au banc : voir docs/measurements/2026-09-06-handshake-*.txt */
+#endif
 #include "mbedtls_port.h"
 #include "../boot/mcu_pki.h"   /* identité du boîtier : certificat client présenté en mTLS */
 #include "wallclock.h"
@@ -246,6 +250,8 @@ static void ws_connect(void) {
     ws_connect_ip();
 }
 static int ws_own_cert, ws_own_cert_rc, ws_tls_conf_stale;
+static unsigned ws_hs_slices;   /* tranches de handshake exécutées depuis le démarrage (diagnostic) */
+unsigned ws_client_tls_hs_slices(void) { return ws_hs_slices; }
 /* L'enrôlement au banc pose le certificat APRÈS la première connexion : la config TLS déjà construite
  * ne le connaît pas. On la marque périmée — la libération se fait au prochain connect, PAS ici :
  * altcp_tls_free_config n'a pas de compteur de références, et la connexion en cours la pointe encore. */
@@ -264,6 +270,11 @@ static void ws_connect_ip(void) {
             ws_tls_conf = altcp_tls_create_config_client((const u8_t *) mcu_tls_roots_pem, mcu_tls_roots_pem_len);
             /* struct altcp_tls_config starts with the mbedtls_ssl_config: cap records at 4 KB (our buffers) */
             if (ws_tls_conf) mbedtls_ssl_conf_max_frag_len((mbedtls_ssl_config *) ws_tls_conf, MBEDTLS_SSL_MAX_FRAG_LEN_4096);
+#if defined(MBEDTLS_ECP_RESTARTABLE)
+            /* Taille des tranches de calcul ECC. Réglage GLOBAL (mbedTLS) : au-delà de N opérations de
+             * base, la multiplication de points rend la main. À ajuster en mesurant itMax au banc. */
+            mbedtls_ecp_set_max_ops(WS_TLS_ECP_MAX_OPS);
+#endif
             if (ws_tls_conf) mbedtls_ssl_conf_verify((mbedtls_ssl_config *) ws_tls_conf, ws_verify_cb, NULL);
             /* mTLS : on présente le certificat du boîtier SI le serveur en demande un (docs/PKI.md §5).
              * mbedtls_ssl_conf_own_cert AJOUTE à une liste : à n'appeler qu'une fois par config, d'où la
@@ -399,6 +410,11 @@ int ws_client_is_tls(void) {
 
 void ws_client_poll(void) {
     uint32_t now = net_millis();
+#if LWIP_ALTCP && defined(MBEDTLS_ECP_RESTARTABLE)
+    /* Handshake découpé : mbedTLS a rendu la main au milieu d'un calcul ECC et attend qu'on le
+     * rappelle — aucun octet TCP ne viendra le faire. Une tranche par tour de boucle audio. */
+    if (ws_pcb && ws_tls) { if (altcp_tls_handshake_continue(ws_pcb)) { ws_hs_slices++; } }
+#endif
     if (ws_state == WS_CLOSED && (int32_t) (now - ws_next_try_ms) >= 0) {
 #if LWIP_ALTCP
         if (ws_tls && WS_TLS_NEEDS_TIME && !wallclock_synced() && now - ws_start_ms < WS_TLS_TIME_GRACE_MS) { ws_time_waits++; ws_next_try_ms = now + 500; return; }   /* no clock → dates unverifiable → wait (bounded) */

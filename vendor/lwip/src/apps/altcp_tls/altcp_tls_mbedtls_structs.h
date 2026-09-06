@@ -60,6 +60,9 @@ extern "C" {
 #define ALTCP_MBEDTLS_FLAGS_UPPER_CALLED      0x02
 #define ALTCP_MBEDTLS_FLAGS_RX_CLOSE_QUEUED   0x04
 #define ALTCP_MBEDTLS_FLAGS_RX_CLOSED         0x08
+/* handshake interrompu au milieu d'un calcul ECC (MBEDTLS_ECP_RESTARTABLE) : à relancer depuis la
+ * boucle applicative, aucun octet TCP n'arrivera pour le faire (altcp_tls_handshake_continue) */
+#define ALTCP_MBEDTLS_FLAGS_CRYPTO_BUSY       0x40
 
 typedef struct altcp_mbedtls_state_s {
   void *conf;
