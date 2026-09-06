@@ -14,5 +14,10 @@ SECTIONS
   _sidata = LOADADDR(.data);
   .data : { _sdata = .; *(.data*) _edata = .; } > RAM AT > FLASH
   .bss  : { _sbss = .; *(.bss*) *(COMMON) _ebss = .; } > RAM
+  /* .noinit : APRÈS .bss, donc HORS de la plage _sbss.._ebss que startup.c remet à zéro. C'est ce
+     qui permet à l'enregistrement de faute de survivre au redémarrage et de dire, au boot suivant,
+     POURQUOI la carte est tombée. Perdu en cas de coupure d'alimentation — acceptable : là,
+     quelqu'un est intervenu physiquement. */
+  .noinit (NOLOAD) : { *(.noinit*) } > RAM
   .dtcm (NOLOAD) : { *(.dtcm*) } > DTCM
 }

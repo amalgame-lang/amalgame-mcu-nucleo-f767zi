@@ -19,6 +19,10 @@ extern int amc_main(void);
 
 void Reset_Handler(void);
 void Default_Handler(void) { for (;;) {} }
+void hard_fault_handler(void);   /* vendor/boot/fault.c */
+void mem_manage_handler(void);
+void bus_fault_handler(void);
+void usage_fault_handler(void);
 
 /* Weak no-op clock init; clock.c provides the strong version. */
 __attribute__((weak)) void Board_ClockInit(void) {}
@@ -52,6 +56,14 @@ vector_fn const vector_table[16 + 104] = {
     [16 + 56] = dma2_stream0_isr,         /* DMA2_STREAM0 — analog ADC RX  */
     [16 + 57] = dma2_stream1_isr,         /* DMA2_STREAM1 — SAI block A TX  */
     [16 + 39] = usart3_isr,               /* USART3 — console TX ring       */
+    /* HardFault : sans ce gestionnaire, une faute tombe dans Default_Handler (boucle infinie) et
+     * il faut attendre le chien de garde SANS savoir pourquoi. Ici on enregistre le contexte en
+     * .noinit puis on redémarre tout de suite (vendor/boot/fault.c). Un index explicite APRÈS
+     * l'initialiseur de plage [2 ... 14] le remplace bien. */
+    [3]  = hard_fault_handler,            /* HardFault                      */
+    [4]  = mem_manage_handler,            /* MemManage                      */
+    [5]  = bus_fault_handler,             /* BusFault                       */
+    [6]  = usage_fault_handler,           /* UsageFault                     */
     [16 + 61] = eth_isr,                  /* ETH                            */
     [16 + 68] = dma2_stream5_isr,         /* DMA2_STREAM5 — SAI block B RX  */
 };
