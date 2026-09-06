@@ -8,7 +8,13 @@ void net_init(void);
 void net_poll(void);
 
 /* Bring-up diagnostics. */
-const char *net_ip_str(void);   /* "0.0.0.0" until DHCP completes */
+const char *net_ip_str(void);
+/* Déclarés SANS garde : cet en-tête est inclus avant lwipopts.h chez certains appelants, où
+ * LWIP_IPV6 vaudrait 0 et masquerait les prototypes (déclaration implicite = erreur). Les
+ * définitions, elles, sont bien conditionnelles dans net_mcu.c. */
+const char *net_ip6_str(void);        /* adresse GLOBALE (SLAAC) ou "::" */
+const char *net_ip6_link_str(void);   /* adresse de lien-local ou "::" */
+int         net_ip6_count(void);      /* nombre d'adresses v6 valides */   /* "0.0.0.0" until DHCP completes */
 int         net_link_up(void);  /* PHY link state (cached by the 250 ms monitor) */
 int         net_link_speed(void); /* +100/+10 = full duplex, -100/-10 = half, 0 = down */
 int         net_rx_count(void); /* frames received from the MAC (0 = RX path dead) */

@@ -13,6 +13,9 @@
 #include "lwip/def.h"
 #include "lwip/pbuf.h"
 #include "lwip/etharp.h"
+#if LWIP_IPV6
+#include "lwip/ethip6.h"
+#endif
 #include "netif/ethernet.h"
 #include "ethernetif.h"
 #include "net_mcu.h"          /* net_millis() for the link-up wait */
@@ -210,6 +213,13 @@ err_t ethernetif_init(struct netif *netif)
     }
     netif->mtu = 1500;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP;   /* link state set by the monitor */
+#if LWIP_IPV6
+    /* Sans ces deux lignes, rien ne SORT en IPv6 : pas de sollicitation de routeur, donc pas de RA,
+     * donc pas d'adresse globale — l'interface reste sur sa seule lien-local. NETIF_FLAG_MLD6 permet
+     * à lwIP de s'inscrire aux groupes multicast (all-nodes, solicited-node). */
+    netif->output_ip6 = ethip6_output;
+    netif->flags |= NETIF_FLAG_MLD6;
+#endif
 
     /* RMII select + GPIO MUST happen BEFORE the MAC clocks are enabled — the
      * MII/RMII choice (SYSCFG_PMC) is sampled as the MAC comes out of reset; set it

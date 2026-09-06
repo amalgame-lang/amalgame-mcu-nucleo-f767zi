@@ -48,6 +48,14 @@ void net_init(void)
     netif_set_default(&mcnet_netif);
     netif_set_up(&mcnet_netif);
     dhcp_start(&mcnet_netif);
+#if LWIP_IPV6
+    /* Double pile : lwIP ne fait rien en IPv6 sans ces deux appels. L'adresse de lien-local se
+     * dérive de la MAC (EUI-64) et sert au voisinage ND ; l'autoconfiguration attend une annonce de
+     * routeur (RA) pour composer l'adresse GLOBALE, celle qui rend la connexion directe possible.
+     * Sur un réseau sans IPv6, aucun RA n'arrive : il ne reste que la lien-local et rien ne change. */
+    netif_create_ip6_linklocal_address(&mcnet_netif, 1);
+    netif_set_ip6_autoconfig_enabled(&mcnet_netif, 1);
+#endif
 }
 
 /* MAC-level RX loss, read from ETH_DMAMFBOCR (read clears it): frames the DMA
@@ -185,6 +193,38 @@ const char *net_ip_str(void)
 {
     return ip4addr_ntoa(netif_ip4_addr(&mcnet_netif));
 }
+
+#if LWIP_IPV6
+/* Première adresse IPv6 GLOBALE valide ("::" tant qu'aucun RA n'est arrivé, ou réseau sans IPv6).
+ * C'est elle qu'on publiera comme candidat de connexion directe (feuille de route §3). */
+const char *net_ip6_str(void)
+{
+    for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+        if (!ip6_addr_isvalid(netif_ip6_addr_state(&mcnet_netif, i))) continue;
+        const ip6_addr_t *a = netif_ip6_addr(&mcnet_netif, i);
+        if (ip6_addr_isglobal(a)) return ip6addr_ntoa(a);
+    }
+    return "::";
+}
+/* Adresse de lien-local (diagnostic : elle existe dès que le lien est up, même sans routeur). */
+const char *net_ip6_link_str(void)
+{
+    for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+        if (!ip6_addr_isvalid(netif_ip6_addr_state(&mcnet_netif, i))) continue;
+        const ip6_addr_t *a = netif_ip6_addr(&mcnet_netif, i);
+        if (ip6_addr_islinklocal(a)) return ip6addr_ntoa(a);
+    }
+    return "::";
+}
+/* Combien d'adresses v6 valides, et l'état brut de chacune (diagnostic de SLAAC). */
+int net_ip6_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++)
+        if (ip6_addr_isvalid(netif_ip6_addr_state(&mcnet_netif, i))) n++;
+    return n;
+}
+#endif
 
 int net_link_up(void)
 {

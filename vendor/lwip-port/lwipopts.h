@@ -12,7 +12,20 @@
 
 /* Protocols */
 #define LWIP_IPV4                   1
-#define LWIP_IPV6                   0
+/* DOUBLE PILE (2026-09-06). But : une adresse globale des deux côtés = connexion directe SANS NAT
+ * (feuille de route §3). IPv4 reste indispensable — beaucoup de réseaux n'ont pas d'IPv6, et le
+ * boîtier doit y fonctionner comme avant ; c'est la cascade de connectivité qui choisit.
+ * Tailles réduites par rapport aux défauts lwIP : un boîtier voit une poignée de voisins (le routeur,
+ * les autres boîtiers du local), pas un réseau d'entreprise. Coût RAM mesuré plus bas. */
+#define LWIP_IPV6                   1
+#define LWIP_IPV6_AUTOCONFIG        1    /* SLAAC : adresse globale depuis les RA du routeur */
+#define LWIP_IPV6_NUM_ADDRESSES     3    /* lien-local + globale + une de rab (renumérotation) */
+#define LWIP_ND6_NUM_NEIGHBORS      6    /* routeur + pairs du local (défaut 10) */
+#define LWIP_ND6_NUM_DESTINATIONS   6
+#define LWIP_ND6_NUM_PREFIXES       2
+#define LWIP_ND6_NUM_ROUTERS        2
+#define MEMP_NUM_ND6_QUEUE          4    /* paquets en attente de résolution d'adresse (défaut 20) */
+#define LWIP_IPV6_DHCP6             0    /* Orange/Free : SLAAC suffit ; DHCPv6 si un réseau l'impose */
 #define LWIP_TCP                    1   /* control channel: WebSocket client (ws_client.c), 2026-09-04 */
 /* TLS (2026-09-05): build with -DMC_TLS=1 → altcp layer + mbedTLS glue (vendor/mbedtls-port). Without it
  * ws_client.c keeps the raw tcp_* API and no altcp code is compiled in. */
