@@ -26,6 +26,31 @@
 #define LWIP_ND6_NUM_ROUTERS        2
 #define MEMP_NUM_ND6_QUEUE          4    /* paquets en attente de résolution d'adresse (défaut 20) */
 #define LWIP_IPV6_DHCP6             0    /* Orange/Free : SLAAC suffit ; DHCPv6 si un réseau l'impose */
+
+/* NOM SUR LE RÉSEAU (2026-09-06, demandé par l'utilisateur). Deux mécanismes, complémentaires :
+ *  - option 12 du DHCP : le boîtier annonce son nom au routeur, qui l'affiche dans sa liste de baux.
+ *    C'est ce qui remplace « un appareil inconnu à l'adresse 192.168.1.42 ».
+ *  - mDNS : le boîtier répond à <nom>.local, donc on le joint SANS connaître son adresse — ce qui
+ *    compte surtout quand la carte est chez quelqu'un d'autre, sur un réseau qu'on ne maîtrise pas.
+ * MEMP_NUM_UDP_PCB +1 (le répondeur mDNS ouvre sa propre socket) et une donnée de netif pour lui. */
+/* mDNS DÉSACTIVÉ (2026-09-06). Tentative faite, trois pièges levés — LWIP_DEBUG défini à 0 rendait
+ * `#ifdef LWIP_DEBUG` vrai et tirait snprintf/malloc/_sbrk ; NETIF_FLAG_IGMP manquait sur l'interface ;
+ * le répondeur doit être prévenu des changements d'adresse (LWIP_NETIF_EXT_STATUS_CALLBACK). Résultat :
+ * la carte répond UNE fois, pendant sa fenêtre d'annonce, puis plus du tout aux interrogations
+ * (0 résolution sur 6). Cause non trouvée. Coût mesuré : +13 Ko de flash, +1,2 Ko de RAM, et du code
+ * multicast à côté du chemin audio — trop cher pour une fonction à moitié faite sur une carte qui part
+ * chez un tiers. Le NOM reste annoncé par l'option 12 du DHCP (netif_set_hostname, net_mcu.c), ce qui
+ * couvre le besoin d'origine : voir le boîtier par son nom dans la box. À reprendre à froid.
+ * Pour réessayer : remettre à 1 ici, les trois correctifs ci-dessus sont conservés. */
+#define LWIP_MDNS_RESPONDER         0
+/* Le répondeur doit être PRÉVENU quand l'adresse change : le nom est annoncé au démarrage, alors que
+ * l'adresse n'arrive qu'avec le DHCP quelques secondes plus tard. Sans ce rappel, la carte ne répond
+ * jamais à son nom (constaté 2026-09-06). MDNS_RESP_USENETIF_EXTCALLBACK suit cette option. */
+#define LWIP_NETIF_EXT_STATUS_CALLBACK 1
+#define LWIP_NUM_NETIF_CLIENT_DATA  1
+#define MDNS_MAX_SERVICES           1
+/* LWIP_IGMP et LWIP_NETIF_HOSTNAME sont définis plus bas avec les autres options du même domaine —
+ * les redéfinir ici ne servait à rien : la seconde définition gagne (piège vécu, IGMP restait à 0). */
 #define LWIP_TCP                    1   /* control channel: WebSocket client (ws_client.c), 2026-09-04 */
 /* TLS (2026-09-05): build with -DMC_TLS=1 → altcp layer + mbedTLS glue (vendor/mbedtls-port). Without it
  * ws_client.c keeps the raw tcp_* API and no altcp code is compiled in. */
@@ -64,7 +89,7 @@ void net_time_sntp_set(unsigned int sec);
 #define DNS_TABLE_SIZE              4
 #define DNS_MAX_NAME_LENGTH         64
 #define DNS_MAX_SERVERS             2
-#define LWIP_IGMP                   0
+#define LWIP_IGMP                   0   /* requis seulement par le répondeur mDNS (désactivé) */
 
 /* Memory: lwIP heap + pools (no libc malloc on bare metal). */
 #define MEM_LIBC_MALLOC             0
@@ -76,7 +101,7 @@ void net_time_sntp_set(unsigned int sec);
 #define MEM_SIZE                    (12 * 1024)
 #endif
 #define MEMP_NUM_PBUF               24
-#define MEMP_NUM_UDP_PCB            8   /* 2 RTP + ctrl + dhcp + sntp + dns + margin */
+#define MEMP_NUM_UDP_PCB            9   /* RTP + ctrl + dhcp + sntp + dns + mdns + marge */
 #define MEMP_NUM_SYS_TIMEOUT        12  /* tcp, arp, ip reass, 2×dhcp, dns + sntp (2 timers) + margin */
 /* TCP sized for ONE small control connection (WebSocket to the server): tiny
  * window and send buffer, no out-of-order queue — a few KB of RAM in total. */
@@ -114,6 +139,10 @@ void net_time_sntp_set(unsigned int sec);
 
 /* No stats / no debug at link-proof time. */
 #define LWIP_STATS                  0
-#define LWIP_DEBUG                  0
+/* NE PAS définir LWIP_DEBUG hors débogage, MÊME À ZÉRO : plusieurs fichiers de lwIP testent
+ * `#ifdef LWIP_DEBUG`, qui est VRAI pour une définition à 0. Le code de trace était donc compilé, et
+ * son snprintf tirait malloc, donc _sbrk et les appels système de la newlib — que ce firmware n'a
+ * pas (constaté 2026-09-06 en activant mDNS). Pour déboguer : -DLWIP_DEBUG=LWIP_DBG_ON en CFLAGS. */
+/* #define LWIP_DEBUG               0 */
 
 #endif /* LWIPOPTS_H */

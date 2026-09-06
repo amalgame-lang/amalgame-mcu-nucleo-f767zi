@@ -212,7 +212,12 @@ err_t ethernetif_init(struct netif *netif)
         netif->hwaddr[i] = mac_addr[i];
     }
     netif->mtu = 1500;
+    /* NETIF_FLAG_IGMP : sans lui, igmp_joingroup_netif échoue et le répondeur mDNS n'entend jamais le
+     * groupe 224.0.0.251 — la carte ne répond pas à son nom. Même piège que NETIF_FLAG_MLD6 en IPv6. */
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP;   /* link state set by the monitor */
+#if LWIP_IGMP
+    netif->flags |= NETIF_FLAG_IGMP;
+#endif
 #if LWIP_IPV6
     /* Sans ces deux lignes, rien ne SORT en IPv6 : pas de sollicitation de routeur, donc pas de RA,
      * donc pas d'adresse globale — l'interface reste sur sa seule lien-local. NETIF_FLAG_MLD6 permet

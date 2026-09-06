@@ -8,6 +8,9 @@
 #include "lwip/ip_addr.h"
 #include "ethernetif.h"
 #include "net_mcu.h"
+#if LWIP_MDNS_RESPONDER
+#include "lwip/apps/mdns.h"
+#endif
 #include "lwip/apps/sntp.h"
 #include "lwip/dns.h"
 #include "wallclock.h"
@@ -48,6 +51,21 @@ void net_init(void)
     netif_set_default(&mcnet_netif);
     netif_set_up(&mcnet_netif);
     dhcp_start(&mcnet_netif);
+#if LWIP_NETIF_HOSTNAME
+    /* Nom du boîtier : « musicall-<uid32 en hexa> », dérivé de l'identifiant unique de la puce, donc
+     * stable et différent pour chaque carte sans rien à configurer. Annoncé au routeur par l'option 12
+     * du DHCP (il l'affichera au lieu d'« appareil inconnu ») et répondu en mDNS sous <nom>.local. */
+    {
+        static char hn[24];
+        unsigned u = (unsigned) net_uid32();
+        const char* hx = "0123456789abcdef";
+        int k = 0; const char* pfx = "musicall-";
+        while (pfx[k]) { hn[k] = pfx[k]; k++; }
+        for (int i = 7; i >= 0; i--) hn[k++] = hx[(u >> (i * 4)) & 0xF];
+        hn[k] = 0;
+        netif_set_hostname(&mcnet_netif, hn);
+    }
+#endif
 #if LWIP_IPV6
     /* Double pile : lwIP ne fait rien en IPv6 sans ces deux appels. L'adresse de lien-local se
      * dérive de la MAC (EUI-64) et sert au voisinage ND ; l'autoconfiguration attend une annonce de
@@ -55,6 +73,12 @@ void net_init(void)
      * Sur un réseau sans IPv6, aucun RA n'arrive : il ne reste que la lien-local et rien ne change. */
     netif_create_ip6_linklocal_address(&mcnet_netif, 1);
     netif_set_ip6_autoconfig_enabled(&mcnet_netif, 1);
+#endif
+#if LWIP_MDNS_RESPONDER
+    /* Répondeur mDNS : le boîtier se fait joindre par son nom sur le réseau local, sans qu'on
+     * connaisse son adresse. Utile au banc, indispensable quand la carte est chez un tiers. */
+    mdns_resp_init();
+    mdns_resp_add_netif(&mcnet_netif, netif_get_hostname(&mcnet_netif));
 #endif
 }
 
