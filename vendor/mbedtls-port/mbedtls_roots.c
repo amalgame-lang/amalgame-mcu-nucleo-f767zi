@@ -62,5 +62,31 @@ const char mcu_tls_roots_pem[] =
     "BBYEFKPIJlqOoUzQNWP8myPIOq5W809WMAoGCCqGSM49BAMDA2cAMGQCMHhMr8N9\n"
     "LdL1VQKs9BdV81r76eXRB6mtjuNjzk6/lBsPNToWLTDzGYgtQKO1jl63uAIwGV7m\n"
     "onyF377c+MM1oqVNs17sgu7F9YKZwgLmVbeOMDbKAXHtKMDLbiGllCcs8f47\n"
+    "-----END CERTIFICATE-----\n"
+    /* ── CA RACINE MusiCall (ECDSA P-384, valide jusqu'en 2046) ──────────────────────────────────
+     * Ajoutée le 2026-09-07, ÉTAPE 1 d'une migration en quatre temps (docs/SILICON-BRINGUP §7bis).
+     * Aujourd'hui elle ne sert à RIEN : le serveur présente toujours son certificat Let's Encrypt, et
+     * les trois racines ISRG ci-dessus restent en place. C'est délibéré et c'est l'ordre qui compte —
+     * le parc doit faire confiance à cette racine AVANT qu'on bascule le certificat de `ctrl`, jamais
+     * l'inverse : basculer d'abord verrouillerait tous les boîtiers d'un coup, et comme la connexion
+     * au serveur EST le canal de mise à jour, ils seraient irrécupérables à distance.
+     * POURQUOI cette migration : les racines ISRG sont décidées par un tiers. Let's Encrypt a déjà
+     * changé sa hiérarchie (X1, puis X2, puis Root YE) ; le jour où la chaîne servie ne remonte plus à
+     * l'une des trois embarquées, le parc perd le serveur. Avec notre racine, le calendrier nous
+     * appartient — vingt ans, et personne d'autre ne peut le raccourcir.
+     * Les racines Let's Encrypt RESTENT ensuite, comme repli : si notre certificat pose un problème,
+     * on rebascule le serveur sans toucher au parc. */
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICAjCCAYegAwIBAgIUHn/Uuj3Jqhy2I7DRg1dSl91ZRR8wCgYIKoZIzj0EAwMw\n"
+    "LjERMA8GA1UECgwITXVzaUNhbGwxGTAXBgNVBAMMEE11c2lDYWxsIFJvb3QgQ0Ew\n"
+    "HhcNMjYwOTA1MTcxMjI0WhcNNDYwODMxMTcxMjI0WjAuMREwDwYDVQQKDAhNdXNp\n"
+    "Q2FsbDEZMBcGA1UEAwwQTXVzaUNhbGwgUm9vdCBDQTB2MBAGByqGSM49AgEGBSuB\n"
+    "BAAiA2IABKsZoaPkUfumh7PtvwDUEqmzvG6LSEkNAeWo9SZnFDtbAgUYRqXryBed\n"
+    "7mWf1wgEkiXcFWY2tqXkKT8ooayOA+xmxmLtE0crkrao+T1UYPQdu5E/TEnV20tt\n"
+    "mlpQuaR44KNmMGQwHQYDVR0OBBYEFI5cKb6nFaZL19fuYRfo76/inT2zMB8GA1Ud\n"
+    "IwQYMBaAFI5cKb6nFaZL19fuYRfo76/inT2zMBIGA1UdEwEB/wQIMAYBAf8CAQEw\n"
+    "DgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2kAMGYCMQCyOTcmUfMXaoUNVgwI\n"
+    "Q8s5BKKZ4IBm8sHQIZgPSTOcNPChpMHX1DBx84rOgpoQk+wCMQCLU4ZvFZKrx9iI\n"
+    "Lsm6r79mGPyLIM44zw8vXtwBEbMK7ypFjyTLOXFP/m+Gpzcy1p8=\n"
     "-----END CERTIFICATE-----\n";
 const size_t mcu_tls_roots_pem_len = sizeof(mcu_tls_roots_pem);

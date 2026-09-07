@@ -14,7 +14,15 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/ecp.h"
 #ifndef WS_TLS_ECP_MAX_OPS
-#define WS_TLS_ECP_MAX_OPS 500   /* mesuré au banc : voir docs/measurements/2026-09-06-handshake-*.txt */
+/* 128 et non 500. Mesuré le 2026-09-07 : à 500, une tranche coûte ~2,6 ms — PLUS qu'une période de
+ * trame audio (2,5 ms). La poignée de main ne bloque alors plus d'un coup, mais elle mange tout le
+ * budget de chaque tour de boucle : la carte est passée à 202 trames émises au lieu de 400 pendant une
+ * seconde, et le son a manqué à l'oreille alors qu'itMax ne montrait que 2,8 ms. Le découpage sans
+ * tranche assez fine ne résout rien, il étale la panne.
+ * À 128, une tranche revient à ~0,65 ms : elle tient dans le temps libre d'un tour de boucle
+ * (~650 µs occupés sur 2500), la poignée de main dure un peu plus longtemps en temps réel, et l'audio
+ * ne s'en aperçoit pas. Voir docs/measurements/2026-09-06-handshake-*.txt et 2026-09-07-coupure-*.txt */
+#define WS_TLS_ECP_MAX_OPS 128
 #endif
 #include "mbedtls_port.h"
 #include "../boot/mcu_pki.h"   /* identité du boîtier : certificat client présenté en mTLS */
