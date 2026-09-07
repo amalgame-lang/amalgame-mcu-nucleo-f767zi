@@ -105,7 +105,10 @@ void net_time_sntp_set(unsigned int sec);
 #define MEMP_NUM_SYS_TIMEOUT        12  /* tcp, arp, ip reass, 2×dhcp, dns + sntp (2 timers) + margin */
 /* TCP sized for ONE small control connection (WebSocket to the server): tiny
  * window and send buffer, no out-of-order queue — a few KB of RAM in total. */
-#define MEMP_NUM_TCP_PCB            2
+/* 3 et non 2 : le client wss vers le serveur en occupe un EN PERMANENCE, et le client HTTP d'UPnP
+ * (description du routeur puis SOAP) en demande un second. À 2 il ne restait aucune marge — un pcb
+ * qui s'attarde en fermeture et la connexion suivante échoue sans rien dire. ~200 o de plus. */
+#define MEMP_NUM_TCP_PCB            3
 #define MEMP_NUM_TCP_PCB_LISTEN     1
 #define MEMP_NUM_TCP_SEG            12
 #define TCP_MSS                     536
