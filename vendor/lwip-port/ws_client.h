@@ -32,6 +32,10 @@ extern uint32_t ws_prof_sndbuf_us, ws_prof_write_us, ws_prof_output_us;
 int ws_client_tls_session_saved(void);
 uint32_t ws_client_tls_resumed_tries(void);
 int ws_client_tls_session_id_len(void);
+/* 1 = on a fini par accepter une DATE périmée sur le certificat du serveur après 30 min d'échecs dus
+ * aux seules dates (chaîne et nom toujours vérifiés). Signifie : le certificat serveur est à renouveler
+ * d'urgence. Sans cette tolérance, une date oubliée couperait tout le parc du canal de contrôle. */
+int ws_client_tls_date_tolerated(void);
 void ws_client_forget_session(void);         /* drop the saved TLS session (next connect = full handshake) */
 /* wss:// needs the wall clock (certificate dates): while wallclock_synced() is 0 no handshake is attempted
  * (WS_TLS_NEEDS_TIME=0 at build time to disable — bench only). Bounded degradation: after WS_TLS_TIME_GRACE_MS

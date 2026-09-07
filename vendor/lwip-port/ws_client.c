@@ -76,14 +76,43 @@ static WS_PCB *ws_pcb;
  * a resumed one (session ID, OpenSSL server cache) skips it. Saved once the WebSocket is open, reused on
  * every reconnect to the same server, dropped when ip/port/sni change. */
 static struct altcp_tls_session ws_tls_sess; static int ws_tls_sess_ok; static uint32_t ws_tls_resumed_tries; static uint32_t ws_time_waits, ws_tls_degraded, ws_start_ms; static int ws_tls_dates_unchecked;
-/* X.509 verify hook: with no clock at all, drop the two date flags (everything else stays fatal) and remember it */
+/* Délai au bout duquel une DATE périmée cesse d'être fatale (voir ws_verify_cb). 30 min : assez long
+ * pour qu'un incident passager ne l'active pas, assez court pour qu'un boîtier ne reste pas coupé une
+ * journée. */
+#ifndef WS_TLS_DATE_GRACE_MS
+#define WS_TLS_DATE_GRACE_MS 1800000
+#endif
+static uint32_t ws_date_fail_since;   /* 1er échec dû aux SEULES dates, 0 = aucun en cours */
+static int ws_date_tolerated;         /* on a fini par accepter une date périmée : à signaler */
+
+/* Crochet de vérification X.509.
+ * DEUX cas où une DATE périmée cesse d'être fatale — et seulement la date, jamais la chaîne ni le nom :
+ *  1. pas d'horloge du tout : les dates sont invérifiables, les refuser n'aurait aucun sens ;
+ *  2. horloge présente MAIS on échoue depuis plus de 30 minutes UNIQUEMENT à cause des dates. C'est
+ *     le cas d'un certificat SERVEUR qu'on aurait oublié de renouveler. Sans cette tolérance, tout le
+ *     parc perdrait le canal de contrôle — donc les mises à jour, donc toute réparation à distance —
+ *     pour une date oubliée. C'est la symétrie exacte de ce que le SERVEUR fait déjà pour un
+ *     certificat de boîtier expiré (docs/PKI.md §9) : on accepte pour pouvoir réparer.
+ * Ce que ça NE relâche PAS : la chaîne doit toujours remonter à une racine embarquée, et le nom doit
+ * toujours correspondre. Un attaquant devrait donc déjà posséder un certificat émis par NOTRE CA pour
+ * NOTRE nom — auquel cas la date ne le gênait pas non plus.
+ * Le fait est mémorisé (ws_tls_dates_unchecked) et remonte dans le diagnostic : on veut le voir. */
 static int ws_verify_cb(void *arg, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     (void) arg; (void) crt; (void) depth;
-    if (!wallclock_synced() && (*flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE))) {
-        *flags &= ~(uint32_t) (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE); ws_tls_dates_unchecked = 1;
+    const uint32_t DATES = MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+    if (!(*flags & DATES)) return 0;
+    if (!wallclock_synced()) {
+        *flags &= ~DATES; ws_tls_dates_unchecked = 1;
+        return 0;
     }
+    if (*flags & ~DATES) return 0;          /* autre chose cloche aussi : on ne tolère RIEN */
+    uint32_t now = net_millis();
+    if (!ws_date_fail_since) { ws_date_fail_since = now ? now : 1; return 0; }   /* on note et on refuse */
+    if ((uint32_t) (now - ws_date_fail_since) < WS_TLS_DATE_GRACE_MS) return 0; /* pas encore */
+    *flags &= ~DATES; ws_tls_dates_unchecked = 1; ws_date_tolerated = 1;
     return 0;
 }
+int ws_client_tls_date_tolerated(void) { return ws_date_tolerated; }
 static void ws_tls_session_drop(void) { if (ws_tls_sess_ok) { altcp_tls_free_session(&ws_tls_sess); ws_tls_sess_ok = 0; } }
 static void ws_tls_session_save(void) {
     if (!ws_tls || !ws_pcb) return;
