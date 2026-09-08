@@ -83,7 +83,23 @@ static inline i64 Mcu_Millis(void) { return 0; /* TODO: SysTick counter */ }
 static volatile unsigned char amc_uart_ring[AMC_UART_RING];
 static volatile unsigned int amc_uart_head, amc_uart_tail;   /* head = producer (main), tail = ISR */
 static int amc_uart_inited = 0;
+/* RÉCEPTION. La console était en émission seule ; l'appro d'usine (musicall docs/PKI.md §3) enrôle un
+ * boîtier PAR LA CONSOLE, carte hors réseau — il faut donc pouvoir lui envoyer des commandes. L'anneau
+ * est dimensionné pour la plus longue d'entre elles, `cert <base64 du PEM>`, ~1400 o.
+ * Lecture NON BLOQUANTE et par LIGNE : l'ISR ne fait qu'empiler, le découpage se fait dans la boucle
+ * principale. Rien ne doit retenir l'ISR — la boucle audio tourne toutes les 2,5 ms. */
+#define AMC_URX_RING 2048
+static volatile unsigned char amc_urx_ring[AMC_URX_RING];
+static volatile unsigned int amc_urx_head, amc_urx_tail;   /* head = ISR, tail = boucle principale */
+static volatile unsigned int amc_urx_lost;                 /* octets perdus : anneau plein */
 void usart3_isr(void) {
+    /* RX d'abord : un octet non lu à temps est perdu pour toujours, un octet à émettre attend. */
+    while (usart_get_flag(USART3, USART_FLAG_RXNE)) {
+        unsigned char c = (unsigned char) usart_recv(USART3);
+        unsigned int next = (amc_urx_head + 1) % AMC_URX_RING;
+        if (next == amc_urx_tail) { amc_urx_lost++; }       /* plein : on jette, on ne bloque JAMAIS */
+        else { amc_urx_ring[amc_urx_head] = c; amc_urx_head = next; }
+    }
     while (usart_get_flag(USART3, USART_FLAG_TXE)) {
         if (amc_uart_tail == amc_uart_head) { usart_disable_tx_interrupt(USART3); return; }
         usart_send(USART3, amc_uart_ring[amc_uart_tail]);
@@ -102,11 +118,12 @@ static void amc_uart_init(void) {
     usart_set_baudrate(USART3, 115200);
     usart_set_databits(USART3, 8);
     usart_set_stopbits(USART3, USART_STOPBITS_1);
-    usart_set_mode(USART3, USART_MODE_TX);
+    usart_set_mode(USART3, USART_MODE_TX_RX);   /* RX ouvert : commandes d'usine par console (PKI §3) */
     usart_set_parity(USART3, USART_PARITY_NONE);
     usart_set_flow_control(USART3, USART_FLOWCONTROL_NONE);
     usart_enable(USART3);
     nvic_enable_irq(NVIC_USART3_IRQ);
+    usart_enable_rx_interrupt(USART3);
     amc_uart_inited = 1;
 }
 static inline void amc_uart_putc(unsigned char c) {
@@ -116,6 +133,26 @@ static inline void amc_uart_putc(unsigned char c) {
     amc_uart_head = next;
     usart_enable_tx_interrupt(USART3);           /* kick (no-op if already enabled) */
 }
+/* Une ligne complète reçue, ou -1. Ne bloque jamais. Les lignes plus longues que `cap` sont TRONQUÉES
+ * et signalées par -2 : mieux vaut un refus visible qu'un certificat coupé en silence, gravé en flash.
+ * CR et LF terminent tous deux une ligne ; les lignes vides sont ignorées. */
+static int amc_uart_getline(char* buf, int cap) {
+    static int len = 0; static int over = 0;
+    if (!amc_uart_inited) { return -1; }
+    while (amc_urx_tail != amc_urx_head) {
+        char c = (char) amc_urx_ring[amc_urx_tail];
+        amc_urx_tail = (amc_urx_tail + 1) % AMC_URX_RING;
+        if (c == '\n' || c == '\r') {
+            if (over) { over = 0; len = 0; return -2; }
+            if (len == 0) { continue; }
+            buf[len] = 0; int n = len; len = 0; return n;
+        }
+        if (len < cap - 1) { buf[len++] = c; } else { over = 1; }
+    }
+    return -1;
+}
+static inline unsigned amc_uart_rx_lost(void) { return amc_urx_lost; }
+
 static inline void code_putc(char c) {
     if (!amc_uart_inited) { amc_uart_init(); }
     amc_uart_putc((unsigned char)c);
