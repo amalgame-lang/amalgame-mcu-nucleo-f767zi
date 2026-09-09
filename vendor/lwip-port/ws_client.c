@@ -125,6 +125,8 @@ static int      ws_state = WS_IDLE;
 static ip_addr_t ws_ip; static uint16_t ws_port; static char ws_target[64]; static int ws_by_name; static uint32_t ws_dns_failures, ws_dns_gen, ws_resolve_ms;
 static char     ws_path[64], ws_host[64], ws_hello[200];
 static ws_line_cb ws_on_line;
+static ws_bin_cb  ws_on_bin;
+void ws_client_set_bin_cb(ws_bin_cb cb) { ws_on_bin = cb; }
 static unsigned char ws_rx[WS_RX_BUF]; static int ws_rx_len;
 static uint32_t ws_next_try_ms, ws_backoff_ms = 2000;
 static uint32_t ws_last_rx_ms, ws_ping_sent_ms;
@@ -189,6 +191,7 @@ static int ws_send_frame(int opcode, const unsigned char *data, int n) {
 }
 
 int ws_client_send_text(const char *s) { return ws_send_frame(1, (const unsigned char *) s, (int) strlen(s)); }
+int ws_client_send_binary(const unsigned char *data, int n) { return ws_send_frame(2, data, n); }
 
 /* freestanding: no snprintf (it drags newlib syscalls in) */
 static int ws_cat(char *d, const char *s) { int n = 0; while (s[n]) { d[n] = s[n]; n++; } d[n] = 0; return n; }
@@ -230,6 +233,7 @@ static void ws_parse_frames(void) {
         if (masked) { unsigned char *m = &ws_rx[hdr - 4]; for (uint32_t i = 0; i < n; i++) pl[i] ^= m[i & 3]; }
         ws_frames++;
         if (op == 1 && ws_on_line) { unsigned char save = pl[n]; pl[n] = 0; ws_on_line((const char *) pl, (int) n); pl[n] = save; }
+        else if (op == 2 && ws_on_bin) ws_on_bin(pl, (int) n);           /* RTP par le WebSocket (repli TCP) */
         else if (op == 9) ws_send_frame(10, pl, (int) n);            /* ping -> pong */
         else if (op == 8) { ws_why = "close"; ws_schedule_retry(); return; }
         int used = hdr + (int) n;
