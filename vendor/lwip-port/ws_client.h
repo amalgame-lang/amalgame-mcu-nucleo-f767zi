@@ -7,9 +7,6 @@
 #include <stdint.h>
 
 typedef void (*ws_line_cb)(const char *line, int len);   /* one text frame received */
-typedef void (*ws_bin_cb)(const unsigned char *data, int len);   /* one BINARY frame received (RTP over WS, 2026-09-09) */
-void ws_client_set_bin_cb(ws_bin_cb cb);
-int  ws_client_send_binary(const unsigned char *data, int n);   /* opcode 2 ; 1 = queued */
 
 /* Start (or restart) the client towards target:port path — target = IPv4 literal or a DNS name (LWIP_DNS,
  * resolved before each connect; lwIP caches by TTL). host = Host: header value (defaults to target).
