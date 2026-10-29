@@ -1,0 +1,16 @@
+namespace Blink
+
+// Blink LD1 (green, PB0) on the Nucleo-F767ZI via the Amalgame.Mcu HAL.
+// Pin 16 = PB0 with the board's port*16+bit encoding (Board_LedGreen).
+// Build: ./build.sh   (needs libopencm3 + arm-none-eabi-gcc)
+// Flash: st-flash write firmware.bin 0x08000000  (on-board ST-LINK)
+public class Program {
+    public static void Main() {
+        let led = 16          // PB0 (Board_LedGreen)
+        Mcu.PinMode(led, Mcu.Output())
+        loop {
+            Mcu.Toggle(led)
+            Mcu.DelayMs(500)
+        }
+    }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "amalgame-mcu-nucleo-f767zi"
+version = "0.1.0"
+description = "Amalgame.Mcu HAL board support for the ST Nucleo-F767ZI (STM32F767ZI, Cortex-M7F), via libopencm3"
+license = "Apache-2.0"
+category = "hardware"
+
+# Board support for the MCU target (docs/proposals/amc-embedded.md §9).
+# The board supplies the concrete Mcu_* bodies + named pin constants; the
+# Amalgame.Mcu facade (declarations) ships with amc itself.
+[stdlib]
+classes   = ["Mcu", "Board"]
+namespace = "Amalgame.Mcu"
+header    = "runtime/Amalgame_Mcu_Board.h"
+libs      = ["opencm3_stm32f7"]
+
+[target]
+mcu        = "cortex-m7"
+board      = "nucleo-f767zi"
+cpu_flags  = "-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
+defines    = ["STM32F7"]
+linker     = "boards/stm32f767zi.ld"
+# Flash via the on-board ST-LINK/V2-1. OpenOCD is the reliable path on this
+# board (st-flash 1.7 has an F76x flash-loader bug). amc builds the command.
+flash_tool  = "openocd"
+openocd_cfg = "board/st_nucleo_f7.cfg"
+flash_addr  = "0x08000000"

@@ -1,0 +1,44 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "amc: build (mcu, debug)",
+      "type": "shell",
+      "command": "amc",
+      "args": [
+        "build", "--debug",
+        "--target=cortex-m7",
+        "--board=${workspaceFolder}",
+        "blink.am", "-o", "firmware"
+      ],
+      "options": {
+        "env": {
+          "AMC_EMBED_INC": "${env:HOME}/libopencm3/include",
+          "AMC_EMBED_LIB": "${env:HOME}/libopencm3/lib"
+        }
+      },
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "amc: flash (mcu)",
+      "type": "shell",
+      "command": "amc",
+      "args": [
+        "build",
+        "--target=cortex-m7",
+        "--board=${workspaceFolder}",
+        "--flash",
+        "blink.am", "-o", "firmware"
+      ],
+      "options": {
+        "env": {
+          "AMC_EMBED_INC": "${env:HOME}/libopencm3/include",
+          "AMC_EMBED_LIB": "${env:HOME}/libopencm3/lib"
+        }
+      },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

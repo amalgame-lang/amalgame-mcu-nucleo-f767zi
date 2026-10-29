@@ -1,0 +1,8 @@
+firmware
+firmware.c
+*.elf
+*.bin
+*.hex
+*.o
+*.a
+build/
