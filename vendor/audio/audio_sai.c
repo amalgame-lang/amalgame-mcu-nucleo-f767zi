@@ -148,6 +148,9 @@ void aud_spk_start(void)
      * be trimmed for 48 kHz, but the PCM5102A (SCK=GND, internal PLL) tolerates an
      * approximate rate, so this is enough to get sound out for bring-up.
      *   ACR1  : MODE=00(MasterTX) PRTCFG=00(free) DS=100(16-bit) MONO=1 OUTDRIV=1
+     *           CKSTR=1 (bit 9): data and FS change on the FALLING edge of SCK, so they are stable on the
+     *           rising edge where the DAC latches them (I2S / left-justified; ST HAL SAI_InitI2S does the same).
+     *           With CKSTR=0 they changed ON the latching edge and only worked through propagation delays.
      *           NODIV=0 + MCKDIV=2: master divider ON → MCLK = kernel(49.152)/(2*2) =
      *           12.288MHz (256*48k), SCK = MCLK/4 = 3.072MHz (64-bit frame, see AFRCR below;
      *           1.536MHz was the first 32-bit-frame bring-up), LRCK = 48kHz. (NODIV=1
@@ -162,10 +165,10 @@ void aud_spk_start(void)
 #if defined(MC_AUDIO_CKIN) && MC_AUDIO_CKIN
     extern int board_audio_ckin;   /* clock.c : 0 si l'oscillateur ne bat pas → on est resté sur le PLLSAI (repli, 2026-10-26) */
     if (board_audio_ckin)
-    SAI_ACR1   = 0x00003080u;   /* kernel = I2S_CKIN 12,288 MHz (clock.c) : MCKDIV=0 (÷1) → MCLK 12,288 MHz exact, BCK = MCLK/4 (trame 64) = 3,072 MHz, MONO=1 */
+    SAI_ACR1   = 0x00003280u;   /* kernel = I2S_CKIN 12,288 MHz (clock.c) : MCKDIV=0 (÷1) → MCLK 12,288 MHz exact, BCK = MCLK/4 (trame 64) = 3,072 MHz, MONO=1, CKSTR=1 */
     else
 #endif
-    SAI_ACR1   = 0x00203080u;   /* NODIV=0, MCKDIV=2 (bits20-23), MONO=1 : kernel PLLSAI 49,14 MHz → MCLK 12,29 MHz (Nucleo, sans oscillateur) */
+    SAI_ACR1   = 0x00203280u;   /* NODIV=0, MCKDIV=2 (bits20-23), MONO=1, CKSTR=1 : kernel PLLSAI 49,14 MHz → MCLK 12,29 MHz (Nucleo, sans oscillateur) */
     SAI_ACR2   = 0x00000001u;
     /* 64-fS BCK frame (64 BCK / LRCK = 3.072 MHz). The PCM5102 DAC tolerates 32-fS, BUT
      * the PCM1802 ADC slave REQUIRES 64-fS or 48-fS BCK (datasheet §7.4.4): at 32-fS only
@@ -245,9 +248,11 @@ void aud_mic_start(void)
      * the whole bus), free protocol, 16-bit, mono. No clock generation here (it rides
      * block A's clock) — so no NODIV/MCKDIV. Same frame/slot layout as block A.
      *   BCR1  : MODE=11(SlaveRX) PRTCFG=00 DS=100(16-bit) SYNCEN=01(sync w/ block A) MONO=1
+     *           CKSTR=1 (bit 9): received data sampled on the RISING edge of SCK; the ADC changes DOUT on
+     *           the falling edge (I2S / left-justified; ST HAL SAI_InitI2S does the same).
      *   BFRCR : FRL=63 FSALL=31 FSDEF=1 FSPOL=0 FSOFF=1 (64-fS frame, matches block A)
      *   BSLOTR: SLOTSZ=10(32-bit) NBSLOT=1(=2 slots) SLOTEN=slots 0+1 (matches block A) */
-    SAI_BCR1   = 0x00000483u;   /* slave RX, 16-bit, STEREO (MONO=0: both slots stored), synchronous */
+    SAI_BCR1   = 0x00000683u;   /* slave RX, 16-bit, STEREO (MONO=0: both slots stored), synchronous, CKSTR=1 */
     SAI_BFRCR  = 0x00031F3Fu;   /* 64-fS frame, FSOFF=0 FSPOL=1 = LEFT-JUSTIFIED (match block A) */
     SAI_BSLOTR = 0x00030180u;   /* 32-bit slots, 2 slots, slots 0+1 enabled */
 
