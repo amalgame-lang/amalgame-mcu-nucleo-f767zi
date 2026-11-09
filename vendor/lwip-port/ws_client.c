@@ -139,6 +139,13 @@ static uint32_t ws_rand(void) {           /* xorshift, seeded with UID + time */
     return ws_rand_state;
 }
 
+/* Exponential backoff, 2 s doubling up to 32 s, with jitter: half of the delay fixed, half random. Clients that lose the
+ * server at the same instant (server restart) would otherwise all come back in the same second, again and again. */
+static void ws_retry_later(void) {
+    ws_next_try_ms = net_millis() + ws_backoff_ms / 2u + ws_rand() % (ws_backoff_ms / 2u + 1u);
+    if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
+}
+
 static void ws_close_pcb(void) {
     if (ws_pcb) {
         ws_pcb_arg(ws_pcb, NULL); ws_pcb_recv(ws_pcb, NULL); ws_pcb_err(ws_pcb, NULL); ws_pcb_sent(ws_pcb, NULL); ws_pcb_poll(ws_pcb, NULL, 0);
@@ -155,8 +162,7 @@ static void ws_schedule_retry(void) {
     ws_close_pcb();
     ws_state = WS_CLOSED;
     ws_rx_len = 0;
-    ws_next_try_ms = net_millis() + ws_backoff_ms;
-    if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
+    ws_retry_later();
 }
 
 static void ws_err_cb(void *arg, err_t err) {
@@ -164,8 +170,7 @@ static void ws_err_cb(void *arg, err_t err) {
     (void) arg; (void) err;
     ws_pcb = NULL;                            /* already freed by lwIP */
     ws_state = WS_CLOSED; ws_rx_len = 0;
-    ws_next_try_ms = net_millis() + ws_backoff_ms;
-    if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
+    ws_retry_later();
 }
 
 /* RFC 6455 client frame: FIN + opcode, MASK bit, masked payload. */
