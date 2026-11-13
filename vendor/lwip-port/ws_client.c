@@ -139,9 +139,23 @@ static uint32_t ws_rand(void) {           /* xorshift, seeded with UID + time */
     return ws_rand_state;
 }
 
+/* WS_BACKOFF_HOLD_MS: the backoff only goes back to 2 s once a session has lasted this long. 0 (default): back to 2 s as soon
+ * as the upgrade succeeds, the original behaviour. A server that accepts the upgrade and closes right after (client certificate
+ * refused, revoked device) then saw a new connection every 2 s forever, each one a full TLS handshake on both sides. */
+#ifndef WS_BACKOFF_HOLD_MS
+#define WS_BACKOFF_HOLD_MS 0
+#endif
+#if WS_BACKOFF_HOLD_MS
+static uint32_t ws_open_ms;      /* when the current session reached WS_OPEN, 0 if it did not */
+#endif
+
 /* Exponential backoff, 2 s doubling up to 32 s, with jitter: half of the delay fixed, half random. Clients that lose the
  * server at the same instant (server restart) would otherwise all come back in the same second, again and again. */
 static void ws_retry_later(void) {
+#if WS_BACKOFF_HOLD_MS
+    if (ws_open_ms && net_millis() - ws_open_ms >= WS_BACKOFF_HOLD_MS) ws_backoff_ms = 2000;
+    ws_open_ms = 0;
+#endif
     ws_next_try_ms = net_millis() + ws_backoff_ms / 2u + ws_rand() % (ws_backoff_ms / 2u + 1u);
     if (ws_backoff_ms < 30000) ws_backoff_ms *= 2;
 }
@@ -265,7 +279,11 @@ static err_t ws_recv_cb(void *arg, WS_PCB *pcb, struct pbuf *p, err_t err) {
         if (!strstr((char *) ws_rx, " 101 ")) { ws_schedule_retry(); return ERR_OK; }
         int used = (int) (end + 4 - (char *) ws_rx);
         memmove(ws_rx, ws_rx + used, ws_rx_len - used); ws_rx_len -= used;
+#if WS_BACKOFF_HOLD_MS
+        ws_state = WS_OPEN; ws_open_ms = net_millis(); if (!ws_open_ms) ws_open_ms = 1; ws_ping_sent_ms = 0;
+#else
         ws_state = WS_OPEN; ws_backoff_ms = 2000; ws_ping_sent_ms = 0;
+#endif
 #if LWIP_ALTCP
         /* Poignée de main complète AVEC dates valides (le drapeau n'hérite que d'une reprise de session) : le
          * certificat a été renouvelé → la tolérance repart de zéro. Sans ça, ws_date_fail_since gardait la date du
