@@ -386,7 +386,10 @@ void ws_client_start(const char *ip, uint16_t port, const char *path, const char
     strncpy(ws_path, path ? path : "/", sizeof ws_path - 1);
     strncpy(ws_host, host ? host : ip, sizeof ws_host - 1);
     if (hello) strncpy(ws_hello, hello, sizeof ws_hello - 1); else ws_hello[0] = 0;
-    ws_backoff_ms = 2000; ws_reconnects = 0; ws_start_ms = net_millis();
+    ws_backoff_ms = 2000; ws_reconnects = 0;
+#if LWIP_ALTCP
+    ws_start_ms = net_millis();                     /* declared with the TLS state: only the TLS time grace reads it */
+#endif
     ws_state = WS_CLOSED; ws_next_try_ms = net_millis();     /* connect on the next poll */
 }
 
