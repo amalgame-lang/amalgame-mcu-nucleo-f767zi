@@ -27,8 +27,8 @@ echo ">> amc --target=cortex-m7 $ENTRY  (transpile to freestanding C)"
 echo ">> arm-none-eabi-gcc + libopencm3"
 arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 \
   -Os -g -ffreestanding -nostartfiles -DSTM32F7 \
-  -I"$EMB" -Iruntime -I"$LIBOPENCM3/include" \
-  -T boards/stm32f767zi.ld boards/startup.c firmware.c \
+  -I"$EMB" -Iruntime -Ivendor/boot -I"$LIBOPENCM3/include" \
+  -T boards/stm32f767zi.ld boards/startup.c boards/clock.c vendor/boot/fault.c firmware.c \
   -L"$LIBOPENCM3/lib" -lopencm3_stm32f7 \
   -o firmware.elf
 
